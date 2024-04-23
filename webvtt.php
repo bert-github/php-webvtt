@@ -634,8 +634,7 @@ class WebVTTCueText implements \Stringable
 
   public function as_html(): string
   {
-    // TODO
-    return $this->value;
+    return $this->flatten_html($this->value);
   }
 
 
@@ -654,7 +653,8 @@ class WebVTTCueText implements \Stringable
     $spans = [];
 
     while ($s !== '' && ! str_starts_with($s, '</')) {
-      if (preg_match('/^<(v|i|b|u|c|lang|ruby)(\.[^ \t>]+)?([ \t]+[^>]*)?>/',
+      if (preg_match(
+          '/^<(v|i|b|u|c|lang|ruby|rt)(?:\.([^ \t>]+))?(?:[ \t]([^>]*))?>/',
           $s, $m)) {
 
         // Start tag.
@@ -699,10 +699,45 @@ class WebVTTCueText implements \Stringable
         if ($span['classes'] !== []) $s .= '.' . implode('.', $span['classes']);
         if ($span['annotation'] !== '') $s .= ' ' . $span['annotation'];
         $s .= '>';
-        $s .= is_array($span['text']) ? $this->flatten($span['text']) : $span;
+        if (is_string($span['text'])) $s .= $span['text'];
+        else $s .= $this->flatten($span['text']);
         $s .= '</' . $span['tag'] . '>';
       } else {
         $s .= $span;
+      }
+    return $s;
+  }
+
+
+  private const htmltag = [ 'b' => 'b', 'i' => 'i', 'u' => 'u',
+    'ruby' => 'ruby', 'rt' => 'rt', 'v' => 'span', 'lang' => 'span' ];
+
+
+  /** Serialize the cue text as an HTML fragment
+   *  \param an array with spans of text
+   *  \return the array serialized to a string
+   */
+  private function flatten_html(array $spans): string
+  {
+    $s = '';
+    foreach ($spans as $span)
+      if (is_string($span)) {
+        $s .= $span;
+      } else {
+        $s .= '<' . self::htmltag[$span['tag']];
+        if ($span['classes'] !== [])
+          $s .= ' class="' .
+            str_replace('"', '&quot;', implode(' ', $span['classes'])) . '"';
+        if ($span['tag'] === 'lang')
+          $s .= ' lang="' . str_replace('"','&quot;',$span['annotation']) . '"';
+        elseif ($span['tag'] === 'v')
+          $s .= ' title="' . str_replace('"','&quot;',$span['annotation']) . '"';
+        $s .= '>';
+        if (is_string($span['text']))
+          $s .= $span['text'];
+        else
+          $s .= $this->flatten_html($span['text']);
+        $s .= '</' . self::htmltag[$span['tag']] . '>';
       }
     return $s;
   }
