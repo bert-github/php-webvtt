@@ -6,14 +6,14 @@ namespace W3C;
 class WebVTTException extends \Exception {}
 
 
-/** WebVTT represents a WebVTT file
+/** WebVTT represents the contents of a WebVTT file
  *
  *  A WebVTT object represents the parsed contents of a WebVTT file.
  *  It has methods to parse and write WebVTT text and some utility
  *  functions.
  *
- *  The same object can be used to parse multiple WebVTT files. Each
- *  call to the parse() or parse_file() methods clears the stored date
+ *  A WebVTT object can be reused to parse multiple WebVTT files. Each
+ *  call to the parse() or parse_file() methods clears the stored data
  *  (the cues, regions and styles properties) before storing the
  *  results of the new parse.
  *
@@ -33,10 +33,13 @@ class WebVTTException extends \Exception {}
  *
  *  Using parse() to parse WebVTT text:
  *
+ *      // Create a WebVTT object.
  *      $mycaptions = new \W3C\WebVTT();
  *      ...
+ *      // Parse some text, using the WebVTT object.
  *      $mycaptions->parse("WEBVTT\n...");
  *      ...
+ *      // Parse some other text, reusing the WebVTT object.
  *      $mycaptions->parse("WEBVTT\n...");
  *
  *  Using parse_file() to parse WebVTT files:
@@ -47,10 +50,10 @@ class WebVTTException extends \Exception {}
  *      ...
  *      $mycaptions->parse_file('captions2.vtt');
  *
- *  The parser raises a WebVTTException exception when a parse error
- *  occurs. The object properties will then hold the results of
- *  parsing up to the error. The type of exception indicates what kind
- *  of error occurred. Example:
+ *  The parser raises a WebVTTException when a parse error occurs. The
+ *  object properties will then hold the results of parsing up to the
+ *  error. In addition to the message in English, a numeric code
+ *  indicates what kind of error occurred. Example:
  *
  *      try {
  *        $myparser = new \W3C\WebVTT('captions.vtt');
@@ -89,60 +92,92 @@ class WebVTT implements \Stringable
   /** cues represents the parsed WebVTT text as an array of cues
    *  Example:
    *
-   *  [ [ "identifier" => "s2",
-   *      "start" => "256.21",
-   *      "end" => "259.01",
-   *      "settings" => [ "align" => "right", "size" => "50%" ],
-   *      "text" => "Is it an apple?\nOr an orange?" ],
-   *    [ "identifier" => ''
-   *      "start" => "259.1",
-   *      "end" => "260.21",
-   *      "settings" => [],
-   *      "text" => "It is an orange." ] ]
+   *      [ [ "identifier" => "s2",
+   *          "start" => "256.21",
+   *          "end" => "259.01",
+   *          "settings" => [ "align" => "right", "size" => "50%" ],
+   *          "text" => "Is it an apple?\nOr an orange?" ],
+   *        [ "identifier" => ''
+   *          "start" => "259.1",
+   *          "end" => "260.21",
+   *          "settings" => [],
+   *          "text" => "It is an orange." ] ]
    *
-   *  It is an array where each entry is a cue, and each cue in turn is
+   *  cues is an array where each entry is a cue, and each cue in turn is
    *  an array with the following entries:
    *
-   *  identifier : the cue's ID, or null if none.
-   *  start      : start time in seconds.
-   *  end        : end time in seconds.
-   *  settings   : an array of style and position properties.
-   *  text       : text of the cue.
+   *      identifier : the cue's ID, or '' if none.
+   *      start      : start time in seconds.
+   *      end        : end time in seconds.
+   *      settings   : an array of style and position properties.
+   *      text       : text of the cue, as a WebVTTCueText object.
    *
-   *  The text can contain style, language and voice tags (<i>,
-   *  <font>, <lang>, <v>, etc.) and entities (&eacute;, etc.). Only
-   *  the <v> tags have been removed and stored in the "voice" field.
-   *  (But see the function as_html() to turn a cue text into an HTML
-   *  fragment with the style tags replaced by HTML tags.)
+   *  The text field is shown as a string above, but is actually a
+   *  WebVTTCueText object, which can be serialized to a string. It
+   *  represents one or more lines of text and may contain plain text
+   *  as well as spans of text enclosed in tags (<i>, <font>, <lang>,
+   *  <v>, etc.) and HTML entities (&eacute;, etc.). Tagged spans can
+   *  be nested, e.g.: "<v Joe>Hello <i>dear</i></v>"
    *
-   *  If a cue has multiple lines, the lines are separated in the text
-   *  field by line feed characters.
+   *  The function as_html() can turn a cue text into an HTML fragment
+   *  with the WebVTT tags replaced by HTML tags.
    */
   public array $cues = [];
 
+
   /** regions is an array with all regions defined in a WebVTT file
-   *  Example:
+   *  E.g., the following two regions in WebVTT:
    *
-   *  [ [ "id" => "fred",
-   *      "width" => "40%",
-   *      "lines" => "3",
-   *      "regionanchor" => "0%,100%",
-   *      "viewportanchor" => "10%,90%",
-   *      "scroll" => "up" ],
-   *    [ "id" => "bill",
-   *      "width" => "40%",
-   *      "lines" => "3",
-   *      "regionanchor" => "100%,100%",
-   *      "viewportanchor" => "90%,90%",
-   *      "scroll" => "up" ] ]
+   *      REGION
+   *      id:fred
+   *      width:40%
+   *      lines:3
+   *      regionanchor:0%,100%
+   *      viewportanchor:10%,90%
+   *      scroll:up
+   *
+   *      REGION
+   *      id:bill
+   *      width:40%
+   *      lines:3
+   *      regionanchor:100%,100%
+   *      viewportanchor:90%,90%
+   *      scroll:up
+   *
+   *  would be represented as:
+   *
+   *      [ [ "id" => "fred",
+   *          "width" => "40%",
+   *          "lines" => "3",
+   *          "regionanchor" => "0%,100%",
+   *          "viewportanchor" => "10%,90%",
+   *          "scroll" => "up" ],
+   *        [ "id" => "bill",
+   *          "width" => "40%",
+   *          "lines" => "3",
+   *          "regionanchor" => "100%,100%",
+   *          "viewportanchor" => "90%,90%",
+   *          "scroll" => "up" ] ]
    */
   public array $regions = [];
 
+
   /** styles is string with the concatenation of all STYLE blocks
-   *  Example: "::cue {background: yellow}\n::cue(b) {color: purple}"
+   *  E.g., the style blocks
    *
-   *  The styles property ends with a newline (unless the property is
-   *  empty). This is unlike the cue text, has a newline between
+   *      STYLE
+   *      ::cue {
+   *        background: yellow}
+   *
+   *      STYLE
+   *      ::cue(b) {color: purple}
+   *
+   *  would give this value for the styles property:
+   *
+   *      "::cue\n  {background: yellow}\n::cue(b) {color: purple}\n"
+   *
+   *  Note that the styles property ends with a newline (unless it is
+   *  empty). This is unlike the cue text, which has a newline between
    *  lines, but not at the end.
    */
   public string $styles = '';
@@ -152,11 +187,11 @@ class WebVTT implements \Stringable
    *  \param $text optional WebVTT text or the name or URL of a WebVTT file
    *  \param $options parsing options (currently none are defined)
    *
-   *  If the $text contains a line terminator, it is parsed as WebVTT
-   *  text, otherwise it is assumed to be a file path or URL.
-   8
+   *  If the $text contains a newline, it is parsed as WebVTT text,
+   *  otherwise it is assumed to be the name of a file path or a URL.
+   *
    *  The constructor may raise a WebVTTException if a parse error
-   *  occurs or if the passed file cannot be read.
+   *  occurs or if the file cannot be read.
    */
   public function __construct(string $text = null, array $options = null)
   {
@@ -169,6 +204,10 @@ class WebVTT implements \Stringable
    *  \param $text text of a WebVTT file
    *
    *  May raise a WebVTTException if parsing fails.
+   *
+   *  Note that, unlike the constructor, the argument is assumed to be
+   *  text, not a file name. To read WebVTT text from a file, use the
+   *  parse_file() method.
    */
   public function parse(string $text): void
   {
@@ -285,22 +324,22 @@ class WebVTT implements \Stringable
    */
   protected function parse_internal(string $text, string $file): void
   {
-    // Remove optional BOM.
-    if (str_starts_with($text, "\u{FEFF}")) $text = substr($text, 1);
+    // Remove optional BOM (which is 3 bytes in UTF-8, the encoding we assume).
+    if (str_starts_with($text, "\u{FEFF}")) $text = substr($text, 3);
 
+    // Split the text into lines. Line endings can be CRLF, LF or CR.
     $lines = preg_split('/\r\n|\r|\n/', $text);
 
-    // First line must start with WEBVTT.
+    // First line must be WEBVTT, optionally followed by space and more text.
     if (!preg_match('/^WEBVTT[ \t]*$/', $lines[0]))
-      $this->error(self::E_WEBVTT, $lines, 0, $file);
+      $this->error(self::E_WEBVTT, $lines[0], 0, $file);
 
     // Second line must be empty.
     if ($lines[1] !== '')
-      $this->error(self::E_LINE, $lines, 1, $file);
-
-    $i = 2;
+      $this->error(self::E_LINE, $lines[1], 1, $file);
 
     // Region, style and comment blocks.
+    $i = 2;
     while ($i <= array_key_last($lines))
       if ($lines[$i] === '')
         $i++;
@@ -323,14 +362,14 @@ class WebVTT implements \Stringable
         $this->cue_block($lines, $i, $file);
   }
 
+
   /** Parse a "NOTE" block (comment block)
    *  \param $lines all the lines of the text being parsed
    *  \param $linenr the line number of the line to parse, by reference
    *  \param $file the name of the file being parsed, or "<none>"
    *
    *  A comment block starts with NOTE and ends before an empty line
-   *  (or the end of file). The block is removed from the start of
-   *  $text and discarded.
+   *  (or the end of file). The block is discarded.
    *
    *  \todo: Check that the text of the block does not contain "-->".
    */
@@ -348,20 +387,25 @@ class WebVTT implements \Stringable
    *
    *  A region block looks something like this:
    *
-   *  REGION
-   *  id:bill
-   *  width:40%
-   *  lines:3
-   *  regionanchor:100%,100%
-   *  viewportanchor:90%,90%
+   *      REGION
+   *      id:bill
+   *      width:40%
+   *      lines:3
+   *      regionanchor:100%,100%
+   *      viewportanchor:90%,90%
    *
    *  The method adds the region settings to the regions property.
    *
-   *  \todo check the syntax of the values
+   *  \todo check the syntax of the values.
    */
   private function region_block(array $lines, int &$linenr, string $file): void
   {
     assert(str_start_with($lines[$linenr], 'REGION'));
+
+    // Process each line in turn, stopping at an empty line. Each line
+    // is split at spaces/tabs and each fragment should then be of the
+    // form "key:value". Raise an error if a fragment is malformed or
+    // the key is unknown, or the same key occurs twice.
     $settings = [];
     while (++$linenr <= array_key_last($lines) && $lines[$linenr] !== '') {
       foreach (preg_split('/[ \t]+/', $lines[$linenr]) as $s) {
@@ -374,6 +418,8 @@ class WebVTT implements \Stringable
         $settings[$m[1]] = $m[2];
       }
     }
+
+    // Append this region to the regions property.
     $this->regions[] = $settings;
   }
 
@@ -385,14 +431,15 @@ class WebVTT implements \Stringable
    *
    *  A style block starts with "STYLE" and looks something like this:
    *
-   *  STYLE
-   *  ::cue {
-   *    background: silver;
-   *    color: red;
-   *  }
+   *      STYLE
+   *      ::cue {
+   *        background: silver;
+   *        color: red;
+   *      }
    *
-   *  The block ends at the next empty line. The method adds the text
-   *  of the block (presumably CSS style rules) to the style property.
+   *  The block ends at an empty line. The method adds the text of the
+   *  block (presumably style rules in CSS syntax) to the style
+   *  property.
    *
    *  \todo Check that the text of the block does not contain "-->".
    */
@@ -409,11 +456,12 @@ class WebVTT implements \Stringable
    *  \param $linenr the line number of the line to parse, by reference
    *  \param $file the name of the file being parsed, or "<none>"
    *
-   *  A cue block is something like this:
+   *  A cue block contains an optional identifier, timestamps and
+   *  optional style settings, and lines of text, e.g.:
    *
-   *  123
-   *  00:00.000 --> 00:02.000
-   *  That’s an, an, that’s an L!
+   *      123
+   *      00:00.000 --> 00:02.000
+   *      That’s an, an, that’s an L!
    */
   private function cue_block(array $lines, int &$linenr, string $file): void
   {
@@ -421,16 +469,16 @@ class WebVTT implements \Stringable
     if (str_contains($lines[$linenr], '-->')) $cue['identifier'] = '';
     else $cue['identifier'] = $lines[$linenr++];
 
-    // h:mm:ss.hhh --> h:mm:ss.hhh + optional settings.
+    // Timing (h:mm:ss.hhh --> h:mm:ss.hhh) and optional cue settings.
     if (!preg_match(
       '/^(?:([0-9]+):)?([0-9]{2}):([0-9]{2}\.[0-9]{3})[ \t]+
       -->[ \t]+(?:([0-9]+):)?([0-9]{2}):([0-9]{2}\.[0-9]{3})
       (?:[ \t]+(.*))?$/x',
       $lines[$linenr], $m))
       $this->error(self::E_TIME, $lines[$linenr], $linenr, $file);
-    $cue['start'] = floatval($m[3]) + 60*floatval($m[2]) + 3600*floatval($m[1]);
-    $cue['end'] = floatval($m[6]) + 60*floatval($m[5]) + 3600*floatval($m[4]);
-    if (isset($m[7]))
+    $cue['start'] = floatval($m[3]) + 60*(floatval($m[2]) + 60*floatval($m[1]));
+    $cue['end'] = floatval($m[6]) + 60*(floatval($m[5]) + 60*floatval($m[4]));
+    if (isset($m[7]))           // There are cue setting after the time
       foreach (preg_split('/[ \t]+/', $m[7] ?? '') as $s) {
         if (!preg_match('/^(vertical|line|position|size|align|region):(.*)$/',
           $s, $m))
@@ -439,21 +487,19 @@ class WebVTT implements \Stringable
       }
     $cue['settings'] = $settings ?? [];
 
-    // The cue text, ends before an empty line.
-    $text = '';
-    while (++$linenr <= array_key_last($lines) && $lines[$linenr] !== '') {
-      if ($text !== '') $text .= "\n";
-      $text .= $lines[$linenr];
-    }
+    // The cue text, which ends before an empty line.
+    $text = [];
+    while (++$linenr <= array_key_last($lines) && $lines[$linenr] !== '')
+      $text[] = $lines[$linenr];
     $cue['text'] = new WebVTTCueText($text);
 
-    // Add this cue to the cues property.
+    // Append this cue to the cues property.
     $this->cues[] = $cue;
   }
 
   /** Throw an exception to signal a parsing error
    *  \param $code the type of error as an integer
-   *  \param $context the remaining text to parse when error occurred
+   *  \param $context the text where the error occurred
    *  \param $linenr the line number in the text where the error occurred
    *
    *  The exception will contain a numeric code (see the constants
@@ -462,7 +508,7 @@ class WebVTT implements \Stringable
    *  being parsed, a description of the error and a part of the
    *  text where the error occurred. Example:
    *
-   *     captions.vtt:2: error: Expected a line terminator: "foo23..."
+   *     captions.vtt:2: error: Expected a line terminator at "foo23"
    */
   protected function error(int $code, string $context, int $linenr,
     string $file): void
@@ -472,15 +518,15 @@ class WebVTT implements \Stringable
     $context = str_replace(["\r", "\n", "\t"], ['\r', '\n', '\t'], $context);
     if ($context !== '') $context = " at \"$context\"";
     switch ($code) {
-      case self::E_IO:         $s = error_get_last()['message'];          break;
-      case self::E_WEBVTT:     $s = 'Missing "WEBVTT" at start of text';  break;
-      case self::E_LINE:       $s = 'Expected a line terminator';         break;
-      case self::E_TIME:       $s = 'Expected a timestamp';               break;
-      case self::E_SETTING:    $s = 'Unknown region setting';             break;
-      case self::E_DUPLICATE:  $s = 'Region setting occurs twice';        break;
-      case self::E_CUESETTING: $s = 'Unknown cue setting';                break;
+      case self::E_IO:         $s = error_get_last()['message'];         break;
+      case self::E_WEBVTT:     $s = 'Missing "WEBVTT" at start of text'; break;
+      case self::E_LINE:       $s = 'Expected a line terminator';        break;
+      case self::E_TIME:       $s = 'Expected a timestamp';              break;
+      case self::E_SETTING:    $s = 'Unknown region setting';            break;
+      case self::E_DUPLICATE:  $s = 'Region setting occurs twice';       break;
+      case self::E_CUESETTING: $s = 'Unknown cue setting';               break;
     }
-    $msg = sprintf("%s:%s: error: %s%s", $file, $linenr, $s, $context);
+    $msg = sprintf("%s:%s: error: %s%s", $file, $linenr + 1, $s, $context);
     throw new WebVTTException($msg, $code);
   }
 
@@ -520,7 +566,8 @@ class WebVTT implements \Stringable
  *  ("&eacute;", "&lt;", "&#39", etc.) but no "&" on its own. (Any "&"
  *  must be written as "&amp;".) The WebVTTCueText class does not
  *  verify that all ampersands are part of a character reference and
- *  also does not check that all such references are correct HTML.
+ *  also does not check that all such character entities exist in
+ *  HTML.
  *
  *  Note 3: Tags can have classes, separated by periods, e.g.,
  *  "<v.special.loud>" has two classes, "special" and "loud". Classes
@@ -533,13 +580,45 @@ class WebVTT implements \Stringable
 class WebVTTCueText implements \Stringable
 {
 
+  /** A tree structure containing the parsed spans of text
+   *
+   *  The members of the array are either plain strings or arrays with
+   *  four fields: tag, classes, annotation and text. E.g.:
+   *
+   *      [ 'Hello',
+   *        [ 'tag' => 'i',
+   *          'classes' => [],
+   *          'annotation' => '',
+   *          'text' => [ 'dear' ]
+   *        ]
+   *      ]
+   *
+   *  The tag field holds a string which can be "v", "b", "i", "u",
+   *  "c", "ruby" or "lang". The classes property holds an array of
+   *  strings. The annotation field holds a string. And the text field
+   *  holds an array of the same type as the value property itself,
+   *  i.e., its members are either strings or arrays with four fields
+   *  as above.
+   */
   protected array $value = [];
 
 
-  public function __construct(string $text)
+  /** Constructor
+   *  \param $lines a string or an array of strings
+   *
+   *  Parses the lines to find the spans of tagged text. Raises an
+   *  exception if the tags are malformed, no properly nested, or have
+   *  unknown names.
+   */
+  public function __construct(string|array $lines)
   {
-    // Split the text into lines and find the spans in each line.
-    foreach (preg_split('/\r\n|\r|\n/', $text) as $line) {
+    // If we're passed a single string, split it into lines.
+    if (is_string($lines))
+      $lines = preg_split('/\r\n|\r|\n/', $lines);
+
+    // Find the spans in each line. If the parse_line() method does
+    // not consume the whole line, it means there was a syntax error.
+    foreach ($lines as $line) {
       if ($this->value !== []) $this->value[] = "\n";
       $this->value = array_merge($this->value, $this->parse_line($line));
       if ($line !== '') throw new \Exception("Incorrect tag: $line");
@@ -560,11 +639,21 @@ class WebVTTCueText implements \Stringable
   }
 
 
+  /** Parse text up to the next unmatched closing tag "</...>" or the end
+   *  \param $s the text to parse, passed by reference, will be modified
+   *  \returns an array of strings and records (arrays with four fields)
+   *
+   *  The method removes all parsed text from the argument $s.
+   *
+   *  The members of the returned array can be strings (for spans of
+   *  plain text) or arrays with four fields (for spans of tagged
+   *  text). Tagged spans can be nested; see the value property above.
+   */
   private function parse_line(string &$s): array
   {
     $spans = [];
 
-    while ($s !== '') {
+    while ($s !== '' && ! str_starts_with($s, '</')) {
       if (preg_match('/^<(v|i|b|u|c|lang|ruby)(\.[^ \t>]+)?([ \t]+[^>]*)?>/',
           $s, $m)) {
 
@@ -579,13 +668,10 @@ class WebVTTCueText implements \Stringable
 
         // End tag.
         if ($tag === 'v' && $s === '') ; // </v> may be omitted at EOL
-        elseif (str_starts_with($s,"</$tag>")) $s = substr($s,strlen("</$tag>"));
+        elseif (str_starts_with($s,"</$tag>")) $s=substr($s,strlen("</$tag>"));
         else throw new \Exception("Missing </$tag>".($s ? " at \"$s\"" : ''));
         $spans[] = ['tag' => $tag, 'classes' => $classes,
           'annotation' => $annotation, 'text' => $content];
-
-      } elseif (str_starts_with($s, '</')) {
-        break;
 
       } elseif (str_starts_with($s, '<')) {
         throw new \Exception("Unknown tag: $s");
@@ -600,6 +686,10 @@ class WebVTTCueText implements \Stringable
   }
 
 
+  /** Turn parsed text back into WebVTT syntax
+   *  \param an array with spans of text
+   *  \return the array serialized to a string
+   */
   private function flatten(array $spans): string
   {
     $s = '';
