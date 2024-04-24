@@ -2,11 +2,56 @@
 
 namespace W3C;
 
+/** Error codes, passed to the WebVTTException.
+ */
+const E_IO = 1;
+const E_WEBVTT = E_IO + 1;
+const E_LINE = E_WEBVTT + 1;
+const E_SETTING = E_LINE + 1;
+const E_DUPLICATE = E_SETTING + 1;
+const E_TIME = E_DUPLICATE + 1;
+const E_CUESETTING = E_TIME + 1;
+const E_UNKNOWN_TAG = E_CUESETTING + 1;
+const E_UNCLOSED = E_UNKNOWN_TAG + 1;
+const E_TAG = E_UNCLOSED + 1;
+const E_SENTENCE = E_TAG + 1;
 
-class WebVTTException extends \Exception {}
+
+/** A WebVTTException is raised when a parsing error occurs.
+ *
+ */
+class WebVTTException extends \Exception
+{
+  public function __construct(string $context = '', int $code = 0,
+    string $file = '<none>', int $linenr = -1, ?\Throwable $previous = null)
+  {
+    if (strlen($context) > 23) $context = substr_replace($context, '...', 20);
+    $context = str_replace(["\r", "\n", "\t"], ['\r', '\n', '\t'], $context);
+    if ($context !== '') $context = " at \"$context\"";
+    switch ($code) {
+      case E_IO:          $s = error_get_last()['message'];             break;
+      case E_WEBVTT:      $s = 'Missing "WEBVTT" at start of text';     break;
+      case E_LINE:        $s = 'Expected a line terminator';            break;
+      case E_TIME:        $s = 'Malformed or missing timestamp';        break;
+      case E_SETTING:     $s = 'Unknown region setting';                break;
+      case E_DUPLICATE:   $s = 'Region setting occurs twice';           break;
+      case E_CUESETTING:  $s = 'Unknown cue setting';                   break;
+      case E_UNKNOWN_TAG: $s = 'Unknown tag';                           break;
+      case E_UNCLOSED:    $s = 'Missing close tag';                     break;
+      case E_TAG:         $s = 'Incorrect tag';                         break;
+      case E_SENTENCE:    $s = 'Sentence splitter made malformed text'; break;
+    }
+    parent::__construct(
+      sprintf("%s:%s: error: %s%s", $file, $linenr + 1, $s, $context),
+      $code, $previous);
+  }
+}
 
 
-/** WebVTT represents the contents of a WebVTT file
+class WebVTTCueTextException extends \Exception {}
+
+
+/** WebVTT represents the contents of a WebVTT file.
  *
  *  A WebVTT object represents the parsed contents of a WebVTT file.
  *  It has methods to parse and write WebVTT text and some utility
@@ -79,17 +124,8 @@ class WebVTTException extends \Exception {}
 class WebVTT implements \Stringable
 {
 
-  /** Error codes, passed to the WebVTTException.
-   */
-  public const E_IO = 1;
-  public const E_WEBVTT = self::E_IO + 1;
-  public const E_LINE = self::E_WEBVTT + 1;
-  public const E_SETTING = self::E_LINE + 1;
-  public const E_DUPLICATE = self::E_SETTING + 1;
-  public const E_TIME = self::E_DUPLICATE + 1;
-  public const E_CUESETTING = self::E_TIME + 1;
-
   /** cues represents the parsed WebVTT text as an array of cues
+   *
    *  Example:
    *
    *      [ [ "identifier" => "s2",
@@ -125,7 +161,8 @@ class WebVTT implements \Stringable
   public array $cues = [];
 
 
-  /** regions is an array with all regions defined in a WebVTT file
+  /** regions is an array with all regions defined in a WebVTT file.
+   *
    *  E.g., the following two regions in WebVTT:
    *
    *      REGION
@@ -162,7 +199,8 @@ class WebVTT implements \Stringable
   public array $regions = [];
 
 
-  /** styles is string with the concatenation of all STYLE blocks
+  /** styles is string with the concatenation of all STYLE blocks.
+   *
    *  E.g., the style blocks
    *
    *      STYLE
@@ -183,7 +221,7 @@ class WebVTT implements \Stringable
   public string $styles = '';
 
 
-  /** Constructor
+  /** Constructor.
    *  \param $text optional WebVTT text or the name or URL of a WebVTT file
    *  \param $options parsing options (currently none are defined)
    *
@@ -193,14 +231,14 @@ class WebVTT implements \Stringable
    *  The constructor may raise a WebVTTException if a parse error
    *  occurs or if the file cannot be read.
    */
-  public function __construct(string $text = null, array $options = null)
+  public function __construct(string $text = "WEBVTT\n\n", array $options = null)
   {
     if (preg_match('/[\r\n]/', $text)) $this->parse($text);
     else $this->parse_file($text);
   }
 
 
-  /** Replace the contents of this object with the results of parsing $text
+  /** Replace the contents of this object with the results of parsing $text.
    *  \param $text text of a WebVTT file
    *
    *  May raise a WebVTTException if parsing fails.
@@ -218,7 +256,7 @@ class WebVTT implements \Stringable
   }
 
 
-  /** Parse a WebVTT file
+  /** Parse a WebVTT file.
    *  \param $file the path or URL to a WebVTT file
    *
    *  Raises a WebVTTException if parsing fails or if the file cannot
@@ -230,12 +268,13 @@ class WebVTT implements \Stringable
     $this->regions = [];
     $this->styles = '';
     $s = @file_get_contents($file);
-    if ($s === false) $this->error(self::E_IO, '', -1, $file);
+    if ($s === false) throw new WebVTTException('', E_IO, $file);
+    // $this->error(E_IO, '', -1, $file);
     $this->parse_internal($s, $file);
   }
 
 
-  /** Return the contents of the WebVTT object as a string in WebVTT syntax
+  /** Return the contents of the WebVTT object as a string in WebVTT syntax.
    *  \returns a string conforming to WebVTT syntax
    *
    *  The returned text is suitable for writing to a WebVTT file.
@@ -295,11 +334,156 @@ class WebVTT implements \Stringable
   public function write_file(string $file): void
   {
     if (@file_put_contents($file, $this->__toString()) === false)
-      $this->error(self::E_IO, '', -1, $file);
+      throw new WebVTTException('', E_IO, $file);
+      // $this->error(E_IO, '', -1, $file);
   }
 
 
-  /** Convert a number of seconds to the form hh:mm:ss.hhh
+  /** Create a transcript in HTML.
+   *
+   *  The method creates a text in HTML that contains all the cue
+   *  text. By default, the text will be between "<div>" and </div>"
+   *  tags, but the tag can be chnaged with the $sectiontag parameter.
+   *
+   *  If an array of time codes is passed in, the text will have
+   *  multiple "<div>" elements: The cues are separated in groups at
+   *  each time code. Empty groups are omitted. The time codes should
+   *  be in increasing order.
+   *
+   *  The method will apply a heuristic to find the start and end of
+   *  sentences and wrap each sentence in a "<p>" element (or another
+   *  tag, if a $sentencetag parameter is provided).
+   *
+   *  A callback function can be given to replace the built-in
+   *  heuristic. Its signature is
+   *
+   *      function (string $cuetext): string
+   *
+   *  The callback is given the collected text of all cues as a single
+   *  string, which includes newlines ("\n") and tags ("<i>", "</b>",
+   *  etc.). It should return a modified string with a form feed
+   *  (\u{000C}) character inserted between sentences. It should also
+   *  make other modifications as necessary around sentences, such as
+   *  removing redundant white space.
+   *
+   *  E.g., if the cue text is
+   *
+   *      "<i>Hi there! What is your name?</i>"
+   *
+   *  the returned text could be
+   *
+   *      "<i>Hi there!\u{000C}What is your name?</i>"
+   *
+   *  with a form feed after the first sentence and the space before
+   *  the second sentence removed.
+   */
+  public function as_html(?array $timecodes = [], string $sectiontag = 'div',
+    string $sentencetag = 'p', ?callable $sentence_splitter = null)
+  {
+    if (is_null($sentence_splitter))
+      $sentence_splitter = self::find_sentences(...);
+
+    $alltext = '';
+    $i = 0;
+    $text = '';
+    foreach ($this->cues as $cue) {
+      if ($i < count($timecodes) && $cue['start'] >= $timecodes[$i]) {
+        $alltext .= $this->to_section($text, $sectiontag, $sentencetag,
+          $sentence_splitter);
+        $text = '';
+        $i++;
+      }
+      if ($text !== '') $text .= "\n";
+      $text .= $cue['text'];
+    }
+    $alltext .= $this->to_section($text, $sectiontag, $sentencetag,
+      $sentence_splitter);
+
+    return $alltext;
+  }
+
+
+  /** Convert cue text to HTML, wrap each sentence in <$sentencetag>
+   *  and the whole text in <$sectiontag>.
+   *  \param $text cue text in WebVTT format
+   *  \param $sectiontag the name of an HTML tag
+   *  \param $sentencetag the name of an HTML tag
+   *  \returns an HTML fragment
+   */
+  private static function to_section(string $text, string $sectiontag,
+    string $sentencetag, callable $splitter): string
+  {
+    if ($text === '') return '';
+
+    $text = $splitter($text);
+    $text = self::fix_up_tags($text); // Close & reopen tags at sentence ends
+    try {
+      $text = new WebVTTCueText($text);
+    } catch (WebVTTCueTextException $e) {
+      throw new WebVTTException($text, E_SENTENCE, '<none>', -1, $e);
+    }
+    $text = "<$sentencetag>" .
+    str_replace("\u{000C}", "</$sentencetag>\n<$sentencetag>",
+      $text->as_html()) . "</$sentencetag>";
+    return "<$sectiontag>\n$text\n</$sectiontag>\n";
+  }
+
+
+  /** Before each form feed, close all open tags and reopen them after it.
+   *  \param $text cue text with tags and FF characters (\u{000C})
+   *  \returns the same text with tags closed before the FF reopened after
+   */
+  private static function fix_up_tags($text): string
+  {
+    $opentags = [];
+    $r = '';
+    while ($text !== '') {
+      if (str_starts_with($text, "\u{000C}")) {
+        for ($i = count($opentags) - 1; $i >= 0; $i--)
+          $r .= '</' . $opentags[$i][0] . '>';
+        $r .= "\u{000C}";
+        for ($i = 0; $i < count($opentags); $i++)
+          $r .= '<' . $opentags[$i][0] . $opentags[$i][1] . '>';
+        $text = substr($text, 1);
+      } elseif (! str_starts_with($text, '<')) {
+        $n = strcspn($text, "<\u{000C}");
+        $r .= substr($text, 0, $n);
+        $text = substr($text, $n);
+      } elseif (preg_match('/^<(\/)?([^. >]+)([^>]*)>/', $text, $m)) {
+        if ($m[1]) array_pop($opentags);   // pop
+        else $opentags[] = [$m[2], $m[3]]; // push
+        $r .= $m[0];
+        $text = substr($text, strlen($m[0]));
+      } else {
+        throw new \Exception("Cannot happen!");
+      }
+    }
+    return $r;
+  }
+
+
+  /** Heuristic function to insert form feeds between sentences.
+   *  \param $text cue text
+   *  \returns the same text with FF characters between sentences.
+   */
+  private static function find_sentences(string $text): string
+  {
+    // Full stop, question mark, exclamation mark or ellipis, followed
+    // by space and an uppercase letter.
+    $text = preg_replace(
+      "/([.!?…](?:<[^>]*>)*)[ \n]+((?:<[^>]*>)*[\"'\\p{Pi}]?\\p{Lu})/u",
+      "\$1\u{000C}\$2", $text);
+
+    // Ideographic full stop, full-width exclamation mark, full-width
+    //  question mark, followed by optional final or closing punctuation.
+    $text = preg_replace("/([！？。｡][\\p{Pf}\\p{Pe}]?)[ \n]*([^< \n])/u",
+      "\$1\u{000C}\$2", $text);
+
+    return $text;
+  }
+
+
+  /** Convert a number of seconds to the form hh:mm:ss.hhh.
    *  \param $seconds a number of seconds >= 0
    *  \returns a string of the form "hh:mm:ss.hhh" or "mm:ss.hhh"
    *
@@ -318,7 +502,7 @@ class WebVTT implements \Stringable
   }
 
 
-  /** Parse WebVTT text
+  /** Parse WebVTT text.
    *  \param $text text of a WebVTT file
    *  \param $file the name of the file being parsed, or "<none>"
    */
@@ -332,11 +516,13 @@ class WebVTT implements \Stringable
 
     // First line must be WEBVTT, optionally followed by space and more text.
     if (!preg_match('/^WEBVTT[ \t]*$/', $lines[0]))
-      $this->error(self::E_WEBVTT, $lines[0], 0, $file);
+      throw new WebVTTException($lines[0], E_WEBVTT, $file, 0);
+      // $this->error(E_WEBVTT, $lines[0], 0, $file);
 
     // Second line must be empty.
     if ($lines[1] !== '')
-      $this->error(self::E_LINE, $lines[1], 1, $file);
+      throw new WebVTTException($lines[1], E_LINE, $file, 1);
+      // $this->error(E_LINE, $lines[1], 1, $file);
 
     // Region, style and comment blocks.
     $i = 2;
@@ -363,7 +549,7 @@ class WebVTT implements \Stringable
   }
 
 
-  /** Parse a "NOTE" block (comment block)
+  /** Parse a "NOTE" block (comment block).
    *  \param $lines all the lines of the text being parsed
    *  \param $linenr the line number of the line to parse, by reference
    *  \param $file the name of the file being parsed, or "<none>"
@@ -380,7 +566,7 @@ class WebVTT implements \Stringable
   }
 
 
-  /** Parse a "REGION" block
+  /** Parse a "REGION" block.
    *  \param $lines all the lines of the text being parsed
    *  \param $linenr the line number of the line to parse, by reference
    *  \param $file the name of the file being parsed, or "<none>"
@@ -412,9 +598,11 @@ class WebVTT implements \Stringable
         if (!preg_match(
           '/^(id|width|lines|regionanchor|viewportanchor|scroll):(.+)$/',
           $s, $m))
-          $this->error(self::E_SETTING, $s, $linenr, $file);
+          throw new WebVTTException($s, E_SETTING, $file, $linenr);
+          // $this->error(E_SETTING, $s, $linenr, $file);
         if (isset($settings[$m[1]]))
-          $this->error(self::E_DUPLICATE, $m[1], $linenr, $file);
+          throw new WebVTTException($m[1], E_DUPLICATE, $file, $linenr);
+          // $this->error(E_DUPLICATE, $m[1], $linenr, $file);
         $settings[$m[1]] = $m[2];
       }
     }
@@ -424,7 +612,7 @@ class WebVTT implements \Stringable
   }
 
 
-  /** Parse a style block
+  /** Parse a style block.
    *  \param $lines all the lines of the text being parsed
    *  \param $linenr the line number of the line to parse, by reference
    *  \param $file the name of the file being parsed, or "<none>"
@@ -451,7 +639,7 @@ class WebVTT implements \Stringable
   }
 
 
-  /** Parse a cue block
+  /** Parse a cue block.
    *  \param $lines all the lines of the text being parsed
    *  \param $linenr the line number of the line to parse, by reference
    *  \param $file the name of the file being parsed, or "<none>"
@@ -475,14 +663,16 @@ class WebVTT implements \Stringable
       -->[ \t]+(?:([0-9]+):)?([0-9]{2}):([0-9]{2}\.[0-9]{3})
       (?:[ \t]+(.*))?$/x',
       $lines[$linenr], $m))
-      $this->error(self::E_TIME, $lines[$linenr], $linenr, $file);
+      throw new WebVTTException($lines[$linenr], E_TIME, $file, $linenr);
+      // $this->error(E_TIME, $lines[$linenr], $linenr, $file);
     $cue['start'] = floatval($m[3]) + 60*(floatval($m[2]) + 60*floatval($m[1]));
     $cue['end'] = floatval($m[6]) + 60*(floatval($m[5]) + 60*floatval($m[4]));
     if (isset($m[7]))           // There are cue setting after the time
       foreach (preg_split('/[ \t]+/', $m[7] ?? '') as $s) {
         if (!preg_match('/^(vertical|line|position|size|align|region):(.*)$/',
           $s, $m))
-          $this->error(self::E_CUESETTING, $s, $linenr, $file);
+          throw new WebVTTException($s, E_CUESETTING, $file, $linenr);
+          // $this->error(E_CUESETTING, $s, $linenr, $file);
         $settings[$m[1]] = $m[2];
       }
     $cue['settings'] = $settings ?? [];
@@ -491,49 +681,20 @@ class WebVTT implements \Stringable
     $text = [];
     while (++$linenr <= array_key_last($lines) && $lines[$linenr] !== '')
       $text[] = $lines[$linenr];
-    $cue['text'] = new WebVTTCueText($text);
+    try {
+      $cue['text'] = new WebVTTCueText($text);
+    } catch (WebVTTCueTextException $e) {
+      throw new WebVTTException($e->getMessage(),$e->getCode(),$file,$linenr-1);
+    }
 
     // Append this cue to the cues property.
     $this->cues[] = $cue;
   }
 
-  /** Throw an exception to signal a parsing error
-   *  \param $code the type of error as an integer
-   *  \param $context the text where the error occurred
-   *  \param $linenr the line number in the text where the error occurred
-   *
-   *  The exception will contain a numeric code (see the constants
-   *  E_IO, E_LINE, etc.) and a message containing the name of the
-   *  file being parsed (or "<none>"), the line number in the text
-   *  being parsed, a description of the error and a part of the
-   *  text where the error occurred. Example:
-   *
-   *     captions.vtt:2: error: Expected a line terminator at "foo23"
-   */
-  protected function error(int $code, string $context, int $linenr,
-    string $file): void
-  {
-
-    if (strlen($context) > 23) $context = substr_replace($context, '...', 20);
-    $context = str_replace(["\r", "\n", "\t"], ['\r', '\n', '\t'], $context);
-    if ($context !== '') $context = " at \"$context\"";
-    switch ($code) {
-      case self::E_IO:         $s = error_get_last()['message'];         break;
-      case self::E_WEBVTT:     $s = 'Missing "WEBVTT" at start of text'; break;
-      case self::E_LINE:       $s = 'Expected a line terminator';        break;
-      case self::E_TIME:       $s = 'Expected a timestamp';              break;
-      case self::E_SETTING:    $s = 'Unknown region setting';            break;
-      case self::E_DUPLICATE:  $s = 'Region setting occurs twice';       break;
-      case self::E_CUESETTING: $s = 'Unknown cue setting';               break;
-    }
-    $msg = sprintf("%s:%s: error: %s%s", $file, $linenr + 1, $s, $context);
-    throw new WebVTTException($msg, $code);
-  }
-
 }
 
 
-/** Represents the text of a cue
+/** Represents the text of a cue.
  *
  *  The text of a cue consists of zero or more runs of plain text and
  *  tagged spans, which can be nested. E.g., this a cue with plain
@@ -580,7 +741,7 @@ class WebVTT implements \Stringable
 class WebVTTCueText implements \Stringable
 {
 
-  /** A tree structure containing the parsed spans of text
+  /** A tree structure containing the parsed spans of text.
    *
    *  The members of the array are either plain strings or arrays with
    *  four fields: tag, classes, annotation and text. E.g.:
@@ -603,7 +764,7 @@ class WebVTTCueText implements \Stringable
   protected array $value = [];
 
 
-  /** Constructor
+  /** Constructor.
    *  \param $lines a string or an array of strings
    *
    *  Parses the lines to find the spans of tagged text. Raises an
@@ -621,7 +782,7 @@ class WebVTTCueText implements \Stringable
     foreach ($lines as $line) {
       if ($this->value !== []) $this->value[] = "\n";
       $this->value = array_merge($this->value, $this->parse_line($line));
-      if ($line !== '') throw new \Exception("Incorrect tag: $line");
+      if ($line !== '') throw new WebVTTCueTextException($line, E_TAG);
     }
   }
 
@@ -638,7 +799,7 @@ class WebVTTCueText implements \Stringable
   }
 
 
-  /** Parse text up to the next unmatched closing tag "</...>" or the end
+  /** Parse text up to the next unmatched closing tag "</...>" or the end.
    *  \param $s the text to parse, passed by reference, will be modified
    *  \returns an array of strings and records (arrays with four fields)
    *
@@ -669,12 +830,12 @@ class WebVTTCueText implements \Stringable
         // End tag.
         if ($tag === 'v' && $s === '') ; // </v> may be omitted at EOL
         elseif (str_starts_with($s,"</$tag>")) $s=substr($s,strlen("</$tag>"));
-        else throw new \Exception("Missing </$tag>".($s ? " at \"$s\"" : ''));
+        else throw new WebVTTCueTextException($s, E_UNCLOSED);
         $spans[] = ['tag' => $tag, 'classes' => $classes,
           'annotation' => $annotation, 'text' => $content];
 
       } elseif (str_starts_with($s, '<')) {
-        throw new \Exception("Unknown tag: $s");
+        throw new WebVTTCueTextException($s, E_UNKNOWN_TAG);
 
       } else {                  // Plain text span
         $n = strcspn($s, '<');
@@ -686,7 +847,7 @@ class WebVTTCueText implements \Stringable
   }
 
 
-  /** Turn parsed text back into WebVTT syntax
+  /** Turn parsed text back into WebVTT syntax.
    *  \param an array with spans of text
    *  \return the array serialized to a string
    */
@@ -709,11 +870,13 @@ class WebVTTCueText implements \Stringable
   }
 
 
+  /** Map WebVTT tags to HTML tags.
+   */
   private const htmltag = [ 'b' => 'b', 'i' => 'i', 'u' => 'u',
     'ruby' => 'ruby', 'rt' => 'rt', 'v' => 'span', 'lang' => 'span' ];
 
 
-  /** Serialize the cue text as an HTML fragment
+  /** Serialize the cue text as an HTML fragment.
    *  \param an array with spans of text
    *  \return the array serialized to a string
    */
