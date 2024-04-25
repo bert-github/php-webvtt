@@ -28,9 +28,18 @@ const E_SENTENCE = E_TAG + 1;
 
 /** A WebVTTException is raised when a parsing error occurs.
  *
+ *  The method getMessage() gives an explanation in English. The
+ *  method getCode() gives one of the code above (E_IO, E_LINE, etc.)
  */
 class WebVTTException extends \Exception
 {
+  /** Create a WebVTTException.
+   *  \param $context a relevant bit of text from the text being parsed
+   *  \param $code indicated the kind of error (one of E_IO, E_TAB, etc)
+   *  \param $file the name of the file being parsed, "<none>" by default
+   *  \param $linenr the line number in that file, -1 by default
+   *  \param $previous the exception that led to this one, null by default
+   */
   public function __construct(string $context = '', int $code = 0,
     string $file = '<none>', int $linenr = -1, ?\Throwable $previous = null)
   {
@@ -245,7 +254,8 @@ class WebVTT implements \Stringable
    *  The constructor may raise a WebVTTException if a parse error
    *  occurs or if the file cannot be read.
    */
-  public function __construct(string $text = "WEBVTT\n\n", array $options = null)
+  public function __construct(string $text = "WEBVTT\n\n",
+    array $options = null)
   {
     if (preg_match('/[\r\n]/', $text)) $this->parse($text);
     else $this->parse_file($text);
@@ -329,8 +339,8 @@ class WebVTT implements \Stringable
       $t .= $this->secs_to_timestamp($c['end']);
       foreach ($c['settings'] as $k => $v) $t .= " $k:$v";
       $t .= "\n";
-      // if ($c['text'] !== '') $t .= "$c[text]\n";
-      $t .= $c['text'] . "\n\n";
+      if ($c['text'] !== '') $t .= "$c[text]\n";
+      $t .= "\n";
     }
 
     return $t;
@@ -352,10 +362,15 @@ class WebVTT implements \Stringable
 
 
   /** Create a transcript in HTML.
+
+   *  \param $timecodes an array of times in seconds to split the transcript
+   *  \param $sectiontag the name of an HTML tag, default is "div"
+   *  \param $sentencetag the name of an HTML tag, default is "p"
+   *  \param $sentence_splitter a callback to override the sentence splitter
    *
    *  The method creates a text in HTML that contains all the cue
    *  text. By default, the text will be between "<div>" and </div>"
-   *  tags, but the tag can be chnaged with the $sectiontag parameter.
+   *  tags, but the tag can be changed with the $sectiontag parameter.
    *
    *  If an array of time codes is passed in, the text will have
    *  multiple "<div>" elements: The cues are separated in groups at
@@ -441,8 +456,9 @@ class WebVTT implements \Stringable
   private const htmltag = [ 'b' => 'b', 'i' => 'i', 'u' => 'u',
     'ruby' => 'ruby', 'rt' => 'rt', 'v' => 'span', 'lang' => 'span' ];
 
+
   /** Convert a cue text in WebVTT syntax to one with HTML tags.
-   *  \param $cuetext text of a cue including tags (<i>, <v>, etc.) and newlines
+   *  \param $cuetext text of a cue including tags (<i>, <v>...) and newlines
    *  \returns the text with WebVTT tags replaced by HTML ones
    */
   public static function cue_as_html(string $cuetext): string
@@ -470,7 +486,17 @@ class WebVTT implements \Stringable
   /** Before each form feed, close all open tags and reopen them after
    *  it; can also be used to verify that all tags are properly matched.
    *  \param $text cue text with tags and FF characters (\u{000C})
-   *  \returns the same text with tags closed before the FF reopened after
+   *  \returns the same text with tags closed before the FF and reopened after
+   *
+   *  The method has two functions: It checks that a WebVTT cue text
+   *  is correct, i.e., it checkes that tags are properly paired; and
+   *  it closes all open tags just before a form feed and reopens them
+   *  after. This is used by as_html() when splitting a text into
+   *  sentences.
+   *
+   *  \todo Also check that the tags are among the known ones (v, i,
+   *  b, u, c, lang, ruby, rt and timestamp) and that only v and lang
+   *  have an annotation.
    */
   private static function fix_up_tags($text): string
   {
@@ -478,7 +504,6 @@ class WebVTT implements \Stringable
     $r = '';
     while ($text !== '') {
       if (str_starts_with($text, "\u{000C}")) {
-        // echo "At FF: $text\n";
         for ($i = count($opentags) - 1; $i >= 0; $i--)
           $r .= '</' . $opentags[$i][0] . '>';
         $r .= "\u{000C}";
@@ -486,12 +511,10 @@ class WebVTT implements \Stringable
           $r .= '<' . $opentags[$i][0] . $opentags[$i][1] . '>';
         $text = substr($text, 1);
       } elseif (! str_starts_with($text, '<')) {
-        // echo "At text: $text\n";
         $n = strcspn($text, "<\u{000C}");
         $r .= substr($text, 0, $n);
         $text = substr($text, $n);
       } elseif (preg_match('/^<(\/)?([^. >]+)([^>]*)>/', $text, $m)) {
-        // echo "At tag: $text\n";
         if (!$m[1])
           $opentags[] = [$m[2], $m[3]]; // Push an open tag on the stack
         elseif (($h = array_pop($opentags)) === null || $h[0] != $m[2]) // Pop
@@ -499,7 +522,6 @@ class WebVTT implements \Stringable
         $r .= $m[0];
         $text = substr($text, strlen($m[0]));
       } else {
-        // echo "At malformed tag: $text\n";
         throw new WebVTTException($text, E_TAG);
       }
     }
@@ -512,6 +534,11 @@ class WebVTT implements \Stringable
   /** Heuristic function to insert form feeds between sentences.
    *  \param $text cue text
    *  \returns the same text with FF characters between sentences.
+   *
+   *  The method currently looks for punctuation that can end a
+   *  sentence followed by space and an uppercase letter (with
+   *  possibly some other quote marks in between); and also for
+   *  ideographic full stops.
    */
   private static function find_sentences(string $text): string
   {
@@ -719,12 +746,11 @@ class WebVTT implements \Stringable
       }
 
     // The cue text, which ends before an empty line.
-    // $text = [];
     $cue['text'] = '';
     while (++$linenr <= array_key_last($lines) && $lines[$linenr] !== '') {
       if ($cue['text'] !== '') $cue['text'] .= "\n";
       $cue['text'] .= $lines[$linenr];
-      }
+    }
 
     // Append this cue to the cues property.
     $this->cues[] = $cue;
