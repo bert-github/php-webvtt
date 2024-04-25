@@ -2,10 +2,19 @@
 
 namespace W3C;
 
-/** Error codes, passed to the WebVTTException.
+/** Error code, passed to the WebVTTException.
+ *  Error while trying to read or write a file or remote resource.
  */
 const E_IO = 1;
+
+/** Error code, passed to the WebVTTException.
+ *  Missing "WEBVTT" at start of file.
+ */
 const E_WEBVTT = E_IO + 1;
+
+/** Error code, passed to the WebVTTException.
+ *  Misssing empty line.
+ */
 const E_LINE = E_WEBVTT + 1;
 const E_SETTING = E_LINE + 1;
 const E_DUPLICATE = E_SETTING + 1;
@@ -46,9 +55,6 @@ class WebVTTException extends \Exception
       $code, $previous);
   }
 }
-
-
-class WebVTTCueTextException extends \Exception {}
 
 
 /** WebVTT represents the contents of a WebVTT file.
@@ -120,6 +126,15 @@ class WebVTTCueTextException extends \Exception {}
  *
  *      $s = myparser->__toString();
  *      file_put_contents('newcaptions.vtt', $s);
+ *
+ *  The function as_html() can turn a WebVTT object into a transcript
+ *  in HTML: It takes all cue text, splits it up into sentences,
+ *  possibly into multiple sections (<div> elements) at given time
+ *  codes, and returns an HTML fragment.
+ *
+ *  The function cue_as_html() can turn the text of a single cue into
+ *  an HTML fragment, with WebVTT tags (<v>, <i>, etc.) replaced by
+ *  HTML ones.
  */
 class WebVTT implements \Stringable
 {
@@ -146,17 +161,13 @@ class WebVTT implements \Stringable
    *      start      : start time in seconds.
    *      end        : end time in seconds.
    *      settings   : an array of style and position properties.
-   *      text       : text of the cue, as a WebVTTCueText object.
+   *      text       : text of the cue.
    *
-   *  The text field is shown as a string above, but is actually a
-   *  WebVTTCueText object, which can be serialized to a string. It
-   *  represents one or more lines of text and may contain plain text
-   *  as well as spans of text enclosed in tags (<i>, <font>, <lang>,
-   *  <v>, etc.) and HTML entities (&eacute;, etc.). Tagged spans can
-   *  be nested, e.g.: "<v Joe>Hello <i>dear</i></v>"
-   *
-   *  The function as_html() can turn a cue text into an HTML fragment
-   *  with the WebVTT tags replaced by HTML tags.
+   *  The text field represents one or more lines of text and may
+   *  contain plain text as well as spans of text enclosed in tags
+   *  (<i>, <font>, <lang>, <v>, etc.) and HTML entities (&eacute;,
+   *  etc.). Tagged spans can be nested, e.g.: "<v Joe>Hello
+   *  <i>dear</i></v>".
    */
   public array $cues = [];
 
@@ -225,8 +236,11 @@ class WebVTT implements \Stringable
    *  \param $text optional WebVTT text or the name or URL of a WebVTT file
    *  \param $options parsing options (currently none are defined)
    *
+   *  If no text is passed in, the object is intialized as if a WebVTT
+   *  file without any cues was given.
+   *
    *  If the $text contains a newline, it is parsed as WebVTT text,
-   *  otherwise it is assumed to be the name of a file path or a URL.
+   *  otherwise it is assumed to be a file path or a URL.
    *
    *  The constructor may raise a WebVTTException if a parse error
    *  occurs or if the file cannot be read.
@@ -269,7 +283,6 @@ class WebVTT implements \Stringable
     $this->styles = '';
     $s = @file_get_contents($file);
     if ($s === false) throw new WebVTTException('', E_IO, $file);
-    // $this->error(E_IO, '', -1, $file);
     $this->parse_internal($s, $file);
   }
 
@@ -335,7 +348,6 @@ class WebVTT implements \Stringable
   {
     if (@file_put_contents($file, $this->__toString()) === false)
       throw new WebVTTException('', E_IO, $file);
-      // $this->error(E_IO, '', -1, $file);
   }
 
 
@@ -417,19 +429,46 @@ class WebVTT implements \Stringable
 
     $text = $splitter($text);
     $text = self::fix_up_tags($text); // Close & reopen tags at sentence ends
-    try {
-      $text = new WebVTTCueText($text);
-    } catch (WebVTTCueTextException $e) {
-      throw new WebVTTException($text, E_SENTENCE, '<none>', -1, $e);
-    }
     $text = "<$sentencetag>" .
-    str_replace("\u{000C}", "</$sentencetag>\n<$sentencetag>",
-      $text->as_html()) . "</$sentencetag>";
+      str_replace("\u{000C}", "</$sentencetag>\n<$sentencetag>",
+        self::cue_as_html($text)) . "</$sentencetag>";
     return "<$sectiontag>\n$text\n</$sectiontag>\n";
   }
 
 
-  /** Before each form feed, close all open tags and reopen them after it.
+  /** Map WebVTT tags to HTML tags.
+   */
+  private const htmltag = [ 'b' => 'b', 'i' => 'i', 'u' => 'u',
+    'ruby' => 'ruby', 'rt' => 'rt', 'v' => 'span', 'lang' => 'span' ];
+
+  /** Convert a cue text in WebVTT syntax to one with HTML tags.
+   *  \param $cuetext text of a cue including tags (<i>, <v>, etc.) and newlines
+   *  \returns the text with WebVTT tags replaced by HTML ones
+   */
+  public static function cue_as_html(string $cuetext): string
+  {
+    return preg_replace_callback(
+      '/<(\/)([^. \t>]+)(?:\.([^ \t>]*))?([ \t]([^>]*))?>/',
+      function($m) {
+        if ($m[1]) return '</' . self::htmltag[$m[2]] . '>';
+        if (!$m[2])
+          $class = '';
+        else
+          $class = ' class=\"'.str_replace(['.','"'],[' ','&quot;'],$m[2]).'"';
+        if ($m[1] === 'v')
+          $annot = ' title="'.str_replace('"','&quot;',$m[3]).'"';
+        elseif ($m[1] === 'lang')
+          $annot = ' lang="' . str_replace('"','&quot;',$m[3]) . '"';
+        else
+          $annot = '';
+        return '' . self::htmltag[$m[1]] . $class . $annot . '>';
+      },
+      $cuetext);
+  }
+
+
+  /** Before each form feed, close all open tags and reopen them after
+   *  it; can also be used to verify that all tags are properly matched.
    *  \param $text cue text with tags and FF characters (\u{000C})
    *  \returns the same text with tags closed before the FF reopened after
    */
@@ -439,6 +478,7 @@ class WebVTT implements \Stringable
     $r = '';
     while ($text !== '') {
       if (str_starts_with($text, "\u{000C}")) {
+        // echo "At FF: $text\n";
         for ($i = count($opentags) - 1; $i >= 0; $i--)
           $r .= '</' . $opentags[$i][0] . '>';
         $r .= "\u{000C}";
@@ -446,18 +486,25 @@ class WebVTT implements \Stringable
           $r .= '<' . $opentags[$i][0] . $opentags[$i][1] . '>';
         $text = substr($text, 1);
       } elseif (! str_starts_with($text, '<')) {
+        // echo "At text: $text\n";
         $n = strcspn($text, "<\u{000C}");
         $r .= substr($text, 0, $n);
         $text = substr($text, $n);
       } elseif (preg_match('/^<(\/)?([^. >]+)([^>]*)>/', $text, $m)) {
-        if ($m[1]) array_pop($opentags);   // pop
-        else $opentags[] = [$m[2], $m[3]]; // push
+        // echo "At tag: $text\n";
+        if (!$m[1])
+          $opentags[] = [$m[2], $m[3]]; // Push an open tag on the stack
+        elseif (($h = array_pop($opentags)) === null || $h[0] != $m[2]) // Pop
+          throw new WebVTTException($m[0], E_TAG);
         $r .= $m[0];
         $text = substr($text, strlen($m[0]));
       } else {
-        throw new \Exception("Cannot happen!");
+        // echo "At malformed tag: $text\n";
+        throw new WebVTTException($text, E_TAG);
       }
     }
+    if (count($opentags) !== 0)
+      throw new WebVTTException($opentags[0][0], E_UNCLOSED, $file, $linenr);
     return $r;
   }
 
@@ -517,12 +564,10 @@ class WebVTT implements \Stringable
     // First line must be WEBVTT, optionally followed by space and more text.
     if (!preg_match('/^WEBVTT[ \t]*$/', $lines[0]))
       throw new WebVTTException($lines[0], E_WEBVTT, $file, 0);
-      // $this->error(E_WEBVTT, $lines[0], 0, $file);
 
     // Second line must be empty.
     if ($lines[1] !== '')
       throw new WebVTTException($lines[1], E_LINE, $file, 1);
-      // $this->error(E_LINE, $lines[1], 1, $file);
 
     // Region, style and comment blocks.
     $i = 2;
@@ -599,10 +644,8 @@ class WebVTT implements \Stringable
           '/^(id|width|lines|regionanchor|viewportanchor|scroll):(.+)$/',
           $s, $m))
           throw new WebVTTException($s, E_SETTING, $file, $linenr);
-          // $this->error(E_SETTING, $s, $linenr, $file);
         if (isset($settings[$m[1]]))
           throw new WebVTTException($m[1], E_DUPLICATE, $file, $linenr);
-          // $this->error(E_DUPLICATE, $m[1], $linenr, $file);
         $settings[$m[1]] = $m[2];
       }
     }
@@ -664,245 +707,27 @@ class WebVTT implements \Stringable
       (?:[ \t]+(.*))?$/x',
       $lines[$linenr], $m))
       throw new WebVTTException($lines[$linenr], E_TIME, $file, $linenr);
-      // $this->error(E_TIME, $lines[$linenr], $linenr, $file);
     $cue['start'] = floatval($m[3]) + 60*(floatval($m[2]) + 60*floatval($m[1]));
     $cue['end'] = floatval($m[6]) + 60*(floatval($m[5]) + 60*floatval($m[4]));
+    $cue['settings'] = [];
     if (isset($m[7]))           // There are cue setting after the time
       foreach (preg_split('/[ \t]+/', $m[7] ?? '') as $s) {
         if (!preg_match('/^(vertical|line|position|size|align|region):(.*)$/',
           $s, $m))
           throw new WebVTTException($s, E_CUESETTING, $file, $linenr);
-          // $this->error(E_CUESETTING, $s, $linenr, $file);
-        $settings[$m[1]] = $m[2];
+        $cue['setting'][$m[1]] = $m[2];
       }
-    $cue['settings'] = $settings ?? [];
 
     // The cue text, which ends before an empty line.
-    $text = [];
-    while (++$linenr <= array_key_last($lines) && $lines[$linenr] !== '')
-      $text[] = $lines[$linenr];
-    try {
-      $cue['text'] = new WebVTTCueText($text);
-    } catch (WebVTTCueTextException $e) {
-      throw new WebVTTException($e->getMessage(),$e->getCode(),$file,$linenr-1);
-    }
+    // $text = [];
+    $cue['text'] = '';
+    while (++$linenr <= array_key_last($lines) && $lines[$linenr] !== '') {
+      if ($cue['text'] !== '') $cue['text'] .= "\n";
+      $cue['text'] .= $lines[$linenr];
+      }
 
     // Append this cue to the cues property.
     $this->cues[] = $cue;
-  }
-
-}
-
-
-/** Represents the text of a cue.
- *
- *  The text of a cue consists of zero or more runs of plain text and
- *  tagged spans, which can be nested. E.g., this a cue with plain
- *  text (including a newline), a v-span, plain text (a space) and an
- *  i-span:
- *
- *      Where did he go?
- *      <v Esme>Hee!</v> <i>laughter</i>
- *
- *  Example usage:
- *
- *      $mycue = new WebVTTCueText("Hi there!\nHow do you do?");
- *      echo "Text is: ", $mycue, "\n";
- *      echo "In HTML: ", $mycue->as_html(), "\n";
- *
- *  A WebVTTCueText object is instantiated by passing it text like the
- *  above. It is a Stringable object, so it will be automatically
- *  converted to a string when used in a context where a string is
- *  expected. And it can also be converted to HTML text with the
- *  as_html() method.
- *
- *  Note 1: In WebVTT, cue text cannot contain empty lines. I.e., it
- *  cannot contain two newlines in a row. It also cannot contain the
- *  string "-->". The WebVTTCueText class, however, does not verify
- *  this. If initialized with such an invalid text, the resulting text
- *  when the object is converted back to a string will thus not be
- *  valid in WebVTT.
- *
- *  Note 2: Cue text can contain references to HTML character entities
- *  ("&eacute;", "&lt;", "&#39", etc.) but no "&" on its own. (Any "&"
- *  must be written as "&amp;".) The WebVTTCueText class does not
- *  verify that all ampersands are part of a character reference and
- *  also does not check that all such character entities exist in
- *  HTML.
- *
- *  Note 3: Tags can have classes, separated by periods, e.g.,
- *  "<v.special.loud>" has two classes, "special" and "loud". Classes
- *  cannot be empty in WebVTT: "<v..loud>" is an error. The
- *  WebVTTCueText class currently does not raise an error, but
- *  silently removes the empty class.
- *
- *  \todo Signal errors for invalid cue text.
- */
-class WebVTTCueText implements \Stringable
-{
-
-  /** A tree structure containing the parsed spans of text.
-   *
-   *  The members of the array are either plain strings or arrays with
-   *  four fields: tag, classes, annotation and text. E.g.:
-   *
-   *      [ 'Hello',
-   *        [ 'tag' => 'i',
-   *          'classes' => [],
-   *          'annotation' => '',
-   *          'text' => [ 'dear' ]
-   *        ]
-   *      ]
-   *
-   *  The tag field holds a string which can be "v", "b", "i", "u",
-   *  "c", "ruby" or "lang". The classes property holds an array of
-   *  strings. The annotation field holds a string. And the text field
-   *  holds an array of the same type as the value property itself,
-   *  i.e., its members are either strings or arrays with four fields
-   *  as above.
-   */
-  protected array $value = [];
-
-
-  /** Constructor.
-   *  \param $lines a string or an array of strings
-   *
-   *  Parses the lines to find the spans of tagged text. Raises an
-   *  exception if the tags are malformed, no properly nested, or have
-   *  unknown names.
-   */
-  public function __construct(string|array $lines)
-  {
-    // If we're passed a single string, split it into lines.
-    if (is_string($lines))
-      $lines = preg_split('/\r\n|\r|\n/', $lines);
-
-    // Find the spans in each line. If the parse_line() method does
-    // not consume the whole line, it means there was a syntax error.
-    foreach ($lines as $line) {
-      if ($this->value !== []) $this->value[] = "\n";
-      $this->value = array_merge($this->value, $this->parse_line($line));
-      if ($line !== '') throw new WebVTTCueTextException($line, E_TAG);
-    }
-  }
-
-
-  public function __toString(): string
-  {
-    return $this->flatten($this->value);
-  }
-
-
-  public function as_html(): string
-  {
-    return $this->flatten_html($this->value);
-  }
-
-
-  /** Parse text up to the next unmatched closing tag "</...>" or the end.
-   *  \param $s the text to parse, passed by reference, will be modified
-   *  \returns an array of strings and records (arrays with four fields)
-   *
-   *  The method removes all parsed text from the argument $s.
-   *
-   *  The members of the returned array can be strings (for spans of
-   *  plain text) or arrays with four fields (for spans of tagged
-   *  text). Tagged spans can be nested; see the value property above.
-   */
-  private function parse_line(string &$s): array
-  {
-    $spans = [];
-
-    while ($s !== '' && ! str_starts_with($s, '</')) {
-      if (preg_match(
-          '/^<(v|i|b|u|c|lang|ruby|rt)(?:\.([^ \t>]+))?(?:[ \t]([^>]*))?>/',
-          $s, $m)) {
-
-        // Start tag.
-        $tag = $m[1];
-        $classes = ! isset($m[2]) ? [] : array_filter(explode('.', $m[2]));
-        $annotation = $m[3] ?? '';
-        $s = substr($s, strlen($m[0]));
-
-        // Content, recursively.
-        $content = $this->parse_line($s);
-
-        // End tag.
-        if ($tag === 'v' && $s === '') ; // </v> may be omitted at EOL
-        elseif (str_starts_with($s,"</$tag>")) $s=substr($s,strlen("</$tag>"));
-        else throw new WebVTTCueTextException($s, E_UNCLOSED);
-        $spans[] = ['tag' => $tag, 'classes' => $classes,
-          'annotation' => $annotation, 'text' => $content];
-
-      } elseif (str_starts_with($s, '<')) {
-        throw new WebVTTCueTextException($s, E_UNKNOWN_TAG);
-
-      } else {                  // Plain text span
-        $n = strcspn($s, '<');
-        $spans[] = substr($s, 0, $n);
-        $s = substr($s, $n);
-      }
-    }
-    return $spans;
-  }
-
-
-  /** Turn parsed text back into WebVTT syntax.
-   *  \param an array with spans of text
-   *  \return the array serialized to a string
-   */
-  private function flatten(array $spans): string
-  {
-    $s = '';
-    foreach ($spans as $span)
-      if (is_array($span)) {
-        $s .= '<' . $span['tag'];
-        if ($span['classes'] !== []) $s .= '.' . implode('.', $span['classes']);
-        if ($span['annotation'] !== '') $s .= ' ' . $span['annotation'];
-        $s .= '>';
-        if (is_string($span['text'])) $s .= $span['text'];
-        else $s .= $this->flatten($span['text']);
-        $s .= '</' . $span['tag'] . '>';
-      } else {
-        $s .= $span;
-      }
-    return $s;
-  }
-
-
-  /** Map WebVTT tags to HTML tags.
-   */
-  private const htmltag = [ 'b' => 'b', 'i' => 'i', 'u' => 'u',
-    'ruby' => 'ruby', 'rt' => 'rt', 'v' => 'span', 'lang' => 'span' ];
-
-
-  /** Serialize the cue text as an HTML fragment.
-   *  \param an array with spans of text
-   *  \return the array serialized to a string
-   */
-  private function flatten_html(array $spans): string
-  {
-    $s = '';
-    foreach ($spans as $span)
-      if (is_string($span)) {
-        $s .= $span;
-      } else {
-        $s .= '<' . self::htmltag[$span['tag']];
-        if ($span['classes'] !== [])
-          $s .= ' class="' .
-            str_replace('"', '&quot;', implode(' ', $span['classes'])) . '"';
-        if ($span['tag'] === 'lang')
-          $s .= ' lang="' . str_replace('"','&quot;',$span['annotation']) . '"';
-        elseif ($span['tag'] === 'v')
-          $s .= ' title="' . str_replace('"','&quot;',$span['annotation']) . '"';
-        $s .= '>';
-        if (is_string($span['text']))
-          $s .= $span['text'];
-        else
-          $s .= $this->flatten_html($span['text']);
-        $s .= '</' . self::htmltag[$span['tag']] . '>';
-      }
-    return $s;
   }
 
 }
