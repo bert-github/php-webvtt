@@ -405,7 +405,7 @@ class WebVTT implements \Stringable
    *  the second sentence removed.
    */
   public function as_html(?array $timecodes = [], string $sectiontag = 'div',
-    string $sentencetag = 'p', ?callable $sentence_splitter = null)
+    string $sentencetag = 'p', ?callable $sentence_splitter = null): string
   {
     if (is_null($sentence_splitter))
       $sentence_splitter = self::find_sentences(...);
@@ -464,20 +464,21 @@ class WebVTT implements \Stringable
   public static function cue_as_html(string $cuetext): string
   {
     return preg_replace_callback(
-      '/<(\/)([^. \t>]+)(?:\.([^ \t>]*))?([ \t]([^>]*))?>/',
+      '/<(\/)?([^. \t>]+)(?:\.([^ \t>]*))?(?:[ \t]([^>]*))?>/',
       function($m) {
-        if ($m[1]) return '</' . self::htmltag[$m[2]] . '>';
-        if (!$m[2])
+        if (! array_key_exists($m[2], self::htmltag)) return ''; // Unknown tag
+        if ($m[1]) return '</' . self::htmltag[$m[2]] . '>';     // End tag
+        if (!isset($m[3]))
           $class = '';
         else
-          $class = ' class=\"'.str_replace(['.','"'],[' ','&quot;'],$m[2]).'"';
-        if ($m[1] === 'v')
-          $annot = ' title="'.str_replace('"','&quot;',$m[3]).'"';
-        elseif ($m[1] === 'lang')
-          $annot = ' lang="' . str_replace('"','&quot;',$m[3]) . '"';
+          $class = ' class=\"'.str_replace(['.','"'],[' ','&quot;'],$m[3]).'"';
+        if ($m[2] === 'v')
+          $annot = ' title="' . str_replace('"','&quot;',$m[4]??'') . '"';
+        elseif ($m[2] === 'lang')
+          $annot = ' lang="' . str_replace('"','&quot;',$m[4]??'') . '"';
         else
           $annot = '';
-        return '' . self::htmltag[$m[1]] . $class . $annot . '>';
+        return '<' . self::htmltag[$m[2]] . $class . $annot . '>';
       },
       $cuetext);
   }
@@ -545,12 +546,12 @@ class WebVTT implements \Stringable
     // Full stop, question mark, exclamation mark or ellipis, followed
     // by space and an uppercase letter.
     $text = preg_replace(
-      "/([.!?…](?:<[^>]*>)*)[ \n]+((?:<[^>]*>)*[\"'\\p{Pi}]?\\p{Lu})/u",
+      "/([.!?…](?:<[^>]*>)*)[ \t\n]+((?:<[^>]*>)*[-— \t\"'\\p{Pi}]*\\p{Lu})/u",
       "\$1\u{000C}\$2", $text);
 
     // Ideographic full stop, full-width exclamation mark, full-width
     //  question mark, followed by optional final or closing punctuation.
-    $text = preg_replace("/([！？。｡][\\p{Pf}\\p{Pe}]?)[ \n]*([^< \n])/u",
+    $text = preg_replace("/([！？。｡][\\p{Pf}\\p{Pe}]?)[ \t\n]*([^< \t\n])/u",
       "\$1\u{000C}\$2", $text);
 
     return $text;
