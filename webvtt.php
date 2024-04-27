@@ -66,6 +66,159 @@ class WebVTTException extends \Exception
 }
 
 
+/** Base class for the blocks of a WeVTT file.
+ */
+class WebVTTBlock {}
+
+
+/** Represents a cue block.
+ *
+ *  A cue has the following properties:
+ *
+ *      identifier : the cue's ID, or '' if none.
+ *      start      : start time in seconds.
+ *      end        : end time in seconds.
+ *      settings   : an array of style and position properties.
+ *      text       : text of the cue.
+ *
+ *  Example:
+ *
+ *      "identifier" => "s2",
+ *      "start" => 256.21,
+ *      "end" => 259.01,
+ *      "settings" => [ "align" => "right", "size" => "50%" ],
+ *      "text" => "Is it an apple?\nOr an orange?"
+ *
+ *  The text field represents one or more lines of text and may
+ *  contain plain text as well as spans of text enclosed in tags
+ *  (<i>, <font>, <lang>, <v>, etc.) and HTML entities (&eacute;,
+ *  etc.). Tagged spans can be nested, e.g.: "<v Joe>Hello
+ *  <i>dear</i></v>".
+ */
+class WebVTTCue extends WebVTTBlock
+{
+  public string $identifier;    // the cue's ID, or '' if none
+  public float $start;          // start time in seconds
+  public float $end;            // end time in seconds
+  public array $settings;       // style and position properties
+  public string $text;          // text of the cue
+  public function __construct(string $identifier, float $start, float $end,
+    array $settings, string $text)
+  {
+    $this->identifier = $identifier;
+    $this->start = $start;
+    $this->end = $end;
+    $this->settings = $settings;
+    $this->text = $text;
+  }
+  public function __toString()
+  {
+    $t = '';
+    if ($this->identifier) $t .= $this->identifier . "\n";
+    $t .= WebVTT::secs_to_timestamp($this->start);
+    $t .= ' --> ';
+    $t .= WebVTT::secs_to_timestamp($this->end);
+    if ($this->settings) foreach ($this-settings as $k => $v) $t .= "$k:$v";
+    return $t .= "\n$this->text\n";
+  }
+}
+
+
+/** Represents a region.
+ *
+ *  A WebVTTRegion has one property, $settings, which contains the
+ *  parsed settings of a region.
+ *
+ *  E.g., the following two regions in WebVTT:
+ *
+ *      REGION
+ *      id:fred
+ *      width:40%
+ *      lines:3
+ *      regionanchor:0%,100%
+ *      viewportanchor:10%,90%
+ *      scroll:up
+ *
+ *      REGION
+ *      id:bill
+ *      width:40%
+ *      lines:3
+ *      regionanchor:100%,100%
+ *      viewportanchor:90%,90%
+ *      scroll:up
+ *
+ *  would be represented as:
+ *
+ *      [ "id" => "fred",
+ *        "width" => "40%",
+ *        "lines" => "3",
+ *        "regionanchor" => "0%,100%",
+ *        "viewportanchor" => "10%,90%",
+ *        "scroll" => "up" ]
+ *  and
+ *      [ "id" => "bill",
+ *        "width" => "40%",
+ *        "lines" => "3",
+ *        "regionanchor" => "100%,100%",
+ *        "viewportanchor" => "90%,90%",
+ *        "scroll" => "up" ]
+ */
+class WebVTTRegion extends WebVTTBlock
+{
+  public array $settings;
+  public function __construct(string $settings) {$this->settings = $settings;}
+  public function __toString()
+  {
+    $s = '';
+    foreach ($this->settings as $k => $v) $s .= "$k:$v\n";
+    return "REGION\n$s";
+  }
+}
+
+
+/** Represents a STYLE block.
+ *
+ *  The object has one proprty, $text, with the text of the style block.
+ *
+ *  E.g., the style blocks
+ *
+ *      STYLE
+ *      ::cue {
+ *        background: yellow}
+ *
+ *      STYLE
+ *      ::cue(b) {color: purple}
+ *
+ *  would give these values for the styles property:
+ *
+ *      "::cue\n  {background: yellow}\n"
+ * and
+ *      "::cue(b) {color: purple}\n"
+ *
+ *  Note that the text property ends with a newline (unless it is
+ *  empty). This is unlike the cue text (see WebVTTCue), which has a
+ *  newline between lines, but not at the end.
+ */
+class WebVTTStyle extends WebVTTBlock
+{
+  public string $text;
+  public function __construct(string $text) {$this->text = $text;}
+  public function __toString() {return "STYLE\n$this->text";}
+}
+
+
+/** Represents a comment (NOTE) block.
+ *
+ *  The text property contains thre text of the comment.
+ */
+class WebVTTNote extends WebVTTBlock
+{
+  public string $text;
+  public function __construct(string $text) {$this->text = $text;}
+  public function __toString() {return "NOTE\n$this->text";}
+}
+
+
 /** WebVTT represents the contents of a WebVTT file.
  *
  *  A WebVTT object represents the parsed contents of a WebVTT file.
@@ -117,7 +270,7 @@ class WebVTTException extends \Exception
  *
  *      try {
  *        $myparser = new \W3C\WebVTT('captions.vtt');
- *        printf("%d cues found\n", count($myparser->cues));
+ *        printf("%d cues found\n", count($myparser->cues()));
  *      } catch (\W3C\WebVTTException $e) {
  *        printf("WebVTT error %d occurred, with message:\n%s\n",
  *          $e->getCode(), $e->getMessage());
@@ -148,97 +301,11 @@ class WebVTTException extends \Exception
 class WebVTT implements \Stringable
 {
 
-  /** cues represents the parsed WebVTT text as an array of cues
-   *
-   *  Example:
-   *
-   *      [ [ "identifier" => "s2",
-   *          "start" => "256.21",
-   *          "end" => "259.01",
-   *          "settings" => [ "align" => "right", "size" => "50%" ],
-   *          "text" => "Is it an apple?\nOr an orange?" ],
-   *        [ "identifier" => ''
-   *          "start" => "259.1",
-   *          "end" => "260.21",
-   *          "settings" => [],
-   *          "text" => "It is an orange." ] ]
-   *
-   *  cues is an array where each entry is a cue, and each cue in turn is
-   *  an array with the following entries:
-   *
-   *      identifier : the cue's ID, or '' if none.
-   *      start      : start time in seconds.
-   *      end        : end time in seconds.
-   *      settings   : an array of style and position properties.
-   *      text       : text of the cue.
-   *
-   *  The text field represents one or more lines of text and may
-   *  contain plain text as well as spans of text enclosed in tags
-   *  (<i>, <font>, <lang>, <v>, etc.) and HTML entities (&eacute;,
-   *  etc.). Tagged spans can be nested, e.g.: "<v Joe>Hello
-   *  <i>dear</i></v>".
+  /** An array with all blocks (REGION, STYLE, NOTE, an cue).
+   *  Each entry is an object of class WebVTTRegion, WebVTTStyle,
+   *  WebVTTNote or WebVTTCue.
    */
-  public array $cues = [];
-
-
-  /** regions is an array with all regions defined in a WebVTT file.
-   *
-   *  E.g., the following two regions in WebVTT:
-   *
-   *      REGION
-   *      id:fred
-   *      width:40%
-   *      lines:3
-   *      regionanchor:0%,100%
-   *      viewportanchor:10%,90%
-   *      scroll:up
-   *
-   *      REGION
-   *      id:bill
-   *      width:40%
-   *      lines:3
-   *      regionanchor:100%,100%
-   *      viewportanchor:90%,90%
-   *      scroll:up
-   *
-   *  would be represented as:
-   *
-   *      [ [ "id" => "fred",
-   *          "width" => "40%",
-   *          "lines" => "3",
-   *          "regionanchor" => "0%,100%",
-   *          "viewportanchor" => "10%,90%",
-   *          "scroll" => "up" ],
-   *        [ "id" => "bill",
-   *          "width" => "40%",
-   *          "lines" => "3",
-   *          "regionanchor" => "100%,100%",
-   *          "viewportanchor" => "90%,90%",
-   *          "scroll" => "up" ] ]
-   */
-  public array $regions = [];
-
-
-  /** styles is string with the concatenation of all STYLE blocks.
-   *
-   *  E.g., the style blocks
-   *
-   *      STYLE
-   *      ::cue {
-   *        background: yellow}
-   *
-   *      STYLE
-   *      ::cue(b) {color: purple}
-   *
-   *  would give this value for the styles property:
-   *
-   *      "::cue\n  {background: yellow}\n::cue(b) {color: purple}\n"
-   *
-   *  Note that the styles property ends with a newline (unless it is
-   *  empty). This is unlike the cue text, which has a newline between
-   *  lines, but not at the end.
-   */
-  public string $styles = '';
+  public array $blocks = [];
 
 
   /** Constructor.
@@ -273,9 +340,7 @@ class WebVTT implements \Stringable
    */
   public function parse(string $text): void
   {
-    $this->cues = [];
-    $this->regions = [];
-    $this->styles = '';
+    $this->blocks = [];
     $this->parse_internal($text, '<none>');
   }
 
@@ -288,9 +353,7 @@ class WebVTT implements \Stringable
    */
   public function parse_file($file)
   {
-    $this->cues = [];
-    $this->regions = [];
-    $this->styles = '';
+    $this->blocks = [];
     $s = @file_get_contents($file);
     if ($s === false) throw new WebVTTException('', E_IO, $file);
     $this->parse_internal($s, $file);
@@ -305,10 +368,9 @@ class WebVTT implements \Stringable
    *  The returned text is not necessarily the same as the text that
    *  was originally parsed to create this WebVTT object. In
    *  particular, it will not have any text on the first line after
-   *  "WEBVTT", it will lack any comment blocks ("NOTE"), all style
-   *  blocks will be merged into a single block, timestamps will not
-   *  contain hours if the hours are 0, and there may be less white
-   *  space. The line terminators will be single line feeds.
+   *  "WEBVTT", timestamps will not contain hours if the hours are 0,
+   *  and there may be less white space. The line terminators will be
+   *  single line feeds.
    *
    *  However, the returned text contains all the data in the object
    *  and re-parsing the returned text will lead to the exact same
@@ -316,34 +378,7 @@ class WebVTT implements \Stringable
    */
   public function __toString(): string
   {
-    $t = "WEBVTT\n\n";
-
-    foreach ($this->regions as $r) {
-      $t .= "REGION\n";
-      if (isset($r['id'])) $t .= "id:$r[id]\n";
-      if (isset($r['width'])) $t .= "width:$r[width]\n";
-      if (isset($r['lines'])) $t .= "lines:$r[lines]\n";
-      if (isset($r['regionanchor'])) $t .= "regionanchor:$r[regionanchor]\n";
-      if (isset($r['viewportanchor'])) $t.="viewportanchor:$r[viewportanchor]\n";
-      if (isset($r['scroll'])) $t .= "scroll:$r[scroll]\n";
-      $t .= "\n";
-    }
-
-    if ($this->styles !== '')
-      $t .= "STYLE\n$this->styles\n";
-
-    foreach ($this->cues as $c) {
-      if ($c['identifier'] !== '') $t .= "$c[identifier]\n";
-      $t .= $this->secs_to_timestamp($c['start']);
-      $t .= ' --> ';
-      $t .= $this->secs_to_timestamp($c['end']);
-      foreach ($c['settings'] as $k => $v) $t .= " $k:$v";
-      $t .= "\n";
-      if ($c['text'] !== '') $t .= "$c[text]\n";
-      $t .= "\n";
-    }
-
-    return $t;
+    return "WEBVTT\n\n" . implode("\n", $this->blocks);
   }
 
 
@@ -413,7 +448,7 @@ class WebVTT implements \Stringable
     $alltext = '';
     $i = 0;
     $text = '';
-    foreach ($this->cues as $cue) {
+    foreach ($this->cues() as $cue) {
       if ($i < count($timecodes) && $cue['start'] >= $timecodes[$i]) {
         $alltext .= $this->to_section($text, $sectiontag, $sentencetag,
           $sentence_splitter);
@@ -635,7 +670,10 @@ class WebVTT implements \Stringable
   private function comment_block(array $lines, int &$linenr, string $file): void
   {
     assert(str_starts_with($lines[$linenr], 'NOTE'));
-    while (++$linenr <= array_key_last($lines) && $lines[$linenr] !== '');
+    $text = strlen($lines[$linenr]) > 4 ? substr($lines[$linenr], 5)."\n" : '';
+    while (++$linenr <= array_key_last($lines) && $lines[$linenr] !== '')
+      $text .= $lines[$linenr] . "\n";
+    $this->blocks[] = new WebVTTNote($text);
   }
 
 
@@ -679,7 +717,7 @@ class WebVTT implements \Stringable
     }
 
     // Append this region to the regions property.
-    $this->regions[] = $settings;
+    $this->blocks[] = new WebVTTRegion($settings);
   }
 
 
@@ -705,8 +743,11 @@ class WebVTT implements \Stringable
   private function style_block(array $lines, int &$linenr, string $file): void
   {
     assert(str_starts_with($lines[$linenr], 'STYLE'));
+    $style = '';
     while (++$linenr <= array_key_last($lines) && $lines[$linenr] !== '')
-      $this->styles .= "$lines[$linenr]\n";
+      $style .= "$lines[$linenr]\n";
+
+    $this->blocks[] = new WebVTTStyle($style);
   }
 
 
@@ -725,8 +766,8 @@ class WebVTT implements \Stringable
   private function cue_block(array $lines, int &$linenr, string $file): void
   {
     // Optional identifier, which is non-empty text not containing "-->".
-    if (str_contains($lines[$linenr], '-->')) $cue['identifier'] = '';
-    else $cue['identifier'] = $lines[$linenr++];
+    if (str_contains($lines[$linenr], '-->')) $identifier = '';
+    else $identifier = $lines[$linenr++];
 
     // Timing (h:mm:ss.hhh --> h:mm:ss.hhh) and optional cue settings.
     if (!preg_match(
@@ -735,26 +776,95 @@ class WebVTT implements \Stringable
       (?:[ \t]+(.*))?$/x',
       $lines[$linenr], $m))
       throw new WebVTTException($lines[$linenr], E_TIME, $file, $linenr);
-    $cue['start'] = floatval($m[3]) + 60*(floatval($m[2]) + 60*floatval($m[1]));
-    $cue['end'] = floatval($m[6]) + 60*(floatval($m[5]) + 60*floatval($m[4]));
-    $cue['settings'] = [];
+    $start = floatval($m[3]) + 60*(floatval($m[2]) + 60*floatval($m[1]));
+    $end = floatval($m[6]) + 60*(floatval($m[5]) + 60*floatval($m[4]));
+    $settings = [];
     if (isset($m[7]))           // There are cue setting after the time
       foreach (preg_split('/[ \t]+/', $m[7] ?? '') as $s) {
         if (!preg_match('/^(vertical|line|position|size|align|region):(.*)$/',
           $s, $m))
           throw new WebVTTException($s, E_CUESETTING, $file, $linenr);
-        $cue['setting'][$m[1]] = $m[2];
+        $settings[$m[1]] = $m[2];
       }
 
     // The cue text, which ends before an empty line.
-    $cue['text'] = '';
+    $text = '';
     while (++$linenr <= array_key_last($lines) && $lines[$linenr] !== '') {
-      if ($cue['text'] !== '') $cue['text'] .= "\n";
-      $cue['text'] .= $lines[$linenr];
+      if ($text !== '') $text .= "\n";
+      $text .= $lines[$linenr];
     }
 
     // Append this cue to the cues property.
-    $this->cues[] = $cue;
+    $this->blocks[] = new WebVTTCue($identifier, $start, $end,
+      $settings, $text);
+  }
+
+
+  /** Returns the cue blocks of the object as an array, where each entry
+   *  is an array with five fields. Each entry has fields "identifier",
+   *  "start", "end", "settings" and "text", e.g.:
+   *
+   *      [ [ "identifier" => "s2",
+   *          "start" => 256.21,
+   *          "end" => 259.01,
+   *          "settings" => [ "align" => "right", "size" => "50%" ],
+   *          "text" => "Is it an apple?\nOr an orange?" ],
+   *        [ "identifier" => "",
+   *          "start" => 260.21,
+   *          "end" => 262.31,
+   *          "settings" => [],
+   *          "text" => "Neither." ] ]
+   */
+  public function cues(): array
+  {
+    return array_map(
+      fn($c) => ['identifier' => $c->identifier, 'start' => $c->start,
+        'end' => $c->end, 'settings' => $c->settings, 'text' => $c->text],
+      array_filter($this->blocks, fn($b) => $b instanceof WebVTTCue));
+  }
+
+
+  /** Returns the regions of the abject as an array, where each entry
+   *  is an array of settings. E.g.:
+   *
+   *      [ [ "id" => "fred",
+   *          "width" => "40%",
+   *          "lines" => "3",
+   *          "regionanchor" => "0%,100%",
+   *          "viewportanchor" => "10%,90%",
+   *          "scroll" => "up" ],
+   *        [ "id" => "bill",
+   *          "width" => "40%",
+   *          "lines" => "3",
+   *          "regionanchor" => "100%,100%",
+   *          "viewportanchor" => "90%,90%",
+   *          "scroll" => "up" ] ]
+   */
+  public function regions(): array
+  {
+    return array_map(
+      fn($r) => $r->settings,
+      array_filter($this->blocks, fn($b) => $b instanceof WebVTTRegion));
+  }
+
+
+  /** Returns the comment blocks of the object as an array of strings.
+   */
+  public function notes(): array
+  {
+    return array_map(
+      fn($c) => $c->text,
+      array_filter($this->blocks, fn($b) => $b instanceof WebVTTNote));
+  }
+
+
+  /** Returns the style blocks of the object as an array of strings.
+   */
+  public function styles(): string
+  {
+    return implode(
+      "\n",
+      array_filter($this->blocks, fn($b) => $b instanceof WebVTTStyle));
   }
 
 }
