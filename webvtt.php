@@ -412,7 +412,7 @@ class WebVTT implements \Stringable
    *  Raises a WebVTTException if parsing fails or if the file cannot
    *  be read.
    */
-  public function parse_file($file)
+  public function parse_file(string $file)
   {
     $this->blocks = [];
     $s = @file_get_contents($file);
