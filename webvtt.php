@@ -1,6 +1,16 @@
 <?php
 
+/*
+* \todo When strictness > 0, also check that region settings have a
+* value that corresponds to the keyword; ditto for cue settings; and
+* check that notes and styles do not contain the string "-->".
+*/
+
 namespace W3C;
+
+/** Version number.
+ */
+const VERSION = '0.1';
 
 /** Error code, passed to the WebVTTException.
  *  Error while trying to read or write a file or remote resource.
@@ -16,14 +26,41 @@ const E_WEBVTT = E_IO + 1;
  *  Misssing empty line.
  */
 const E_LINE = E_WEBVTT + 1;
+
+/** Error code, passed to the WebVTTException.
+ *  Unknown region setting.
+ */
 const E_SETTING = E_LINE + 1;
+
+/** Error code, passed to the WebVTTException.
+ *  Duplicate region setting.
+ */
 const E_DUPLICATE = E_SETTING + 1;
+
+/** Error code, passed to the WebVTTException.
+ *  Malformed or missing timestamp.
+ */
 const E_TIME = E_DUPLICATE + 1;
+
+/** Error code, passed to the WebVTTException.
+ *  Unknown cue setting.
+ */
 const E_CUESETTING = E_TIME + 1;
+
+/** Error code, passed to the WebVTTException.
+ *  Unknown tag.
+ */
 const E_UNKNOWN_TAG = E_CUESETTING + 1;
+
+/** Error code, passed to the WebVTTException.
+ *  Missing close tag.
+ */
 const E_UNCLOSED = E_UNKNOWN_TAG + 1;
+
+/** Error code, passed to the WebVTTException.
+ *  Incorrect tag.
+ */
 const E_TAG = E_UNCLOSED + 1;
-const E_SENTENCE = E_TAG + 1;
 
 
 /** A WebVTTException is raised when a parsing error occurs.
@@ -57,7 +94,6 @@ class WebVTTException extends \Exception
       case E_UNKNOWN_TAG: $s = 'Unknown tag';                           break;
       case E_UNCLOSED:    $s = 'Missing close tag';                     break;
       case E_TAG:         $s = 'Incorrect tag';                         break;
-      case E_SENTENCE:    $s = 'Sentence splitter made malformed text'; break;
     }
     parent::__construct(
       sprintf("%s:%s: error: %s%s", $file, $linenr + 1, $s, $context),
@@ -308,9 +344,25 @@ class WebVTT implements \Stringable
   public array $blocks = [];
 
 
+  /** Level of strictness of grammar checking.
+   *  Currently only two levels are defined.
+   *
+   *  When $strictness <= 0, the parser accepts unknown tags, unknown
+   *  cue settings and unknown region settings. When $trictness is >
+   *  0, it will instead throw a WebVTTException.
+   *
+   *  Currently, even with $strictness > 0, not all restrictions of
+   *  the WebVTT specification are checked. E.g., the parser currently
+   *  doesn't check the syntax of the values of the region settings,
+   *  and omits to check that a comment (NOTE block) does not contain
+   *  the string "-->".
+   */
+  public int $strictness = 0;
+
+
   /** Constructor.
    *  \param $text optional WebVTT text or the name or URL of a WebVTT file
-   *  \param $options parsing options (currently none are defined)
+   *  \param $options parsing options
    *
    *  If no text is passed in, the object is intialized as if a WebVTT
    *  file without any cues was given.
@@ -320,10 +372,19 @@ class WebVTT implements \Stringable
    *
    *  The constructor may raise a WebVTTException if a parse error
    *  occurs or if the file cannot be read.
+   *
+   *  Only one option is currently defined. If $options contains the
+   *  field "strictness", it sets the $strictness property, which
+   *  enables stricter grammar checks. See there for an explanation of
+   *  the values. E.g.:
+   *
+   *      $myobject = new WebVTT("captions.vtt", ["strictness" => 1]);
    */
   public function __construct(string $text = "WEBVTT\n\n",
     array $options = null)
   {
+    $this->strictness = $options['strictness'] ?? 0;
+
     if (preg_match('/[\r\n]/', $text)) $this->parse($text);
     else $this->parse_file($text);
   }
@@ -459,7 +520,7 @@ class WebVTT implements \Stringable
       $text .= $cue['text'];
     }
     $alltext .= $this->to_section($text, $sectiontag, $sentencetag,
-      $sentence_splitter);
+      $sentence_splitter, $this->strictness);
 
     return $alltext;
   }
@@ -473,12 +534,13 @@ class WebVTT implements \Stringable
    *  \returns an HTML fragment
    */
   private static function to_section(string $text, string $sectiontag,
-    string $sentencetag, callable $splitter): string
+    string $sentencetag, callable $splitter, int $strictness = 0): string
   {
     if ($text === '') return '';
 
     $text = $splitter($text);
-    $text = self::fix_up_tags($text); // Close & reopen tags at sentence ends
+    // Close & reopen tags at sentence ends:
+    $text = self::fix_up_tags($text, $strictness);
     $text = "<$sentencetag>" .
       str_replace("\u{000C}", "</$sentencetag>\n<$sentencetag>",
         self::cue_as_html($text)) . "</$sentencetag>";
@@ -496,17 +558,19 @@ class WebVTT implements \Stringable
    *  \param $cuetext text of a cue including tags (<i>, <v>...) and newlines
    *  \returns the text with WebVTT tags replaced by HTML ones
    */
-  public static function cue_as_html(string $cuetext): string
+  public static function cue_as_html(string $cuetext, int $strictness = 0):
+    string
   {
     return preg_replace_callback(
       '/<(\/)?([^. \t>]+)(?:\.([^ \t>]*))?(?:[ \t]([^>]*))?>/',
-      function($m) {
-        if (! array_key_exists($m[2], self::htmltag)) return ''; // Unknown tag
-        if ($m[1]) return '</' . self::htmltag[$m[2]] . '>';     // End tag
-        if (!isset($m[3]))
-          $class = '';
-        else
-          $class = ' class=\"'.str_replace(['.','"'],[' ','&quot;'],$m[3]).'"';
+      function($m) use ($strictness) {
+        if (! array_key_exists($m[2], self::htmltag))	{ // Unknown tag
+          if ($strictness <= 0) return ''; // Just omit the tag
+          throw new WebVTTException($m[0], E_UNKNOWN_TAG);
+        }
+        if ($m[1]) return '</' . self::htmltag[$m[2]] . '>'; // End tag
+        $class = empty($m[3]) ? '' :
+          ' class="' . str_replace(['.','"'],[' ','&quot;'],$m[3]) . '"';
         if ($m[2] === 'v')
           $annot = ' title="' . str_replace('"','&quot;',$m[4]??'') . '"';
         elseif ($m[2] === 'lang')
@@ -534,27 +598,36 @@ class WebVTT implements \Stringable
    *  b, u, c, lang, ruby, rt and timestamp) and that only v and lang
    *  have an annotation.
    */
-  private static function fix_up_tags($text): string
+  private static function fix_up_tags($text, int $strictness = 0): string
   {
     $opentags = [];
     $r = '';
     while ($text !== '') {
-      if (str_starts_with($text, "\u{000C}")) {
+      if (str_starts_with($text, "\u{000C}")) { // Sentence end
         for ($i = count($opentags) - 1; $i >= 0; $i--)
           $r .= '</' . $opentags[$i][0] . '>';
         $r .= "\u{000C}";
         for ($i = 0; $i < count($opentags); $i++)
           $r .= '<' . $opentags[$i][0] . $opentags[$i][1] . '>';
         $text = substr($text, 1);
-      } elseif (! str_starts_with($text, '<')) {
+      } elseif (! str_starts_with($text, '<')) { // Text
         $n = strcspn($text, "<\u{000C}");
         $r .= substr($text, 0, $n);
         $text = substr($text, $n);
-      } elseif (preg_match('/^<(\/)?([^. >]+)([^>]*)>/', $text, $m)) {
-        if (!$m[1])
-          $opentags[] = [$m[2], $m[3]]; // Push an open tag on the stack
-        elseif (($h = array_pop($opentags)) === null || $h[0] != $m[2]) // Pop
-          throw new WebVTTException($m[0], E_TAG);
+      } elseif (preg_match('/^<\/([^>]+)>/', $text, $m)) { // End tag
+        $h = array_pop($opentags);
+        if (! $h || $h[0] != $m[1]) throw new WebVTTException($m[0], E_TAG);
+        $r .= $m[0];
+        $text = substr($text, strlen($m[0]));
+      } elseif (preg_match(     // Timestamp
+          '/^<(?:[0-9]+:)?[0-9]{2}:[0-9]{2}\.[0-9]{3}>/', $text, $m)) {
+        $r .= $m[0];
+        $text = substr($text, strlen($m[0]));
+      } elseif (preg_match('/^<([^. \t>]+)([^>]*)>/', $text, $m)) {
+        if ($strictness > 0 &&
+          !preg_match('/^(?:c|i|b|u|ruby|rt|v|lang)$/', $m[1]))
+          throw new WebVTTException($m[0], E_UNKNOWN_TAG);
+        $opentags[] = [$m[1], $m[2]]; // Push an open tag on the stack
         $r .= $m[0];
         $text = substr($text, strlen($m[0]));
       } else {
@@ -706,9 +779,11 @@ class WebVTT implements \Stringable
     $settings = [];
     while (++$linenr <= array_key_last($lines) && $lines[$linenr] !== '') {
       foreach (preg_split('/[ \t]+/', $lines[$linenr]) as $s) {
-        if (!preg_match(
-          '/^(id|width|lines|regionanchor|viewportanchor|scroll):(.+)$/',
-          $s, $m))
+        if (!preg_match('/^([^:]+):(.+)$/', $s, $m) ||
+          ($this->strictness > 0 &&
+            !preg_match(
+              '/^(?:id|width|lines|regionanchor|viewportanchor|scroll)$/',
+              $m[1])))
           throw new WebVTTException($s, E_SETTING, $file, $linenr);
         if (isset($settings[$m[1]]))
           throw new WebVTTException($m[1], E_DUPLICATE, $file, $linenr);
@@ -781,8 +856,10 @@ class WebVTT implements \Stringable
     $settings = [];
     if (isset($m[7]))           // There are cue setting after the time
       foreach (preg_split('/[ \t]+/', $m[7] ?? '') as $s) {
-        if (!preg_match('/^(vertical|line|position|size|align|region):(.*)$/',
-          $s, $m))
+        if (!preg_match('/^([^:]+):(.*)$/', $s, $m) ||
+          ($this->strictness > 0 &&
+            !preg_match('/^(?:vertical|line|position|size|align|region)$/',
+              $m[1])))
           throw new WebVTTException($s, E_CUESETTING, $file, $linenr);
         $settings[$m[1]] = $m[2];
       }
@@ -791,7 +868,7 @@ class WebVTT implements \Stringable
     $text = '';
     while (++$linenr <= array_key_last($lines) && $lines[$linenr] !== '') {
       if ($text !== '') $text .= "\n";
-      $text .= $lines[$linenr];
+      $text .= self::fix_up_tags($lines[$linenr], $this->strictness);
     }
 
     // Append this cue to the cues property.
