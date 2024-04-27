@@ -5,6 +5,21 @@ A WebVTT object represents the parsed contents of a WebVTT file. It
 has methods to parse and write WebVTT text and to convert WebVTT text
 to HTML.
 
+* `public function	__construct(string $text="WEBVTT\n\n", array $options=null)`
+* `public function parse(string $text)`
+* `public function parse_file(string $file)`
+* `public function __toString(): string`
+* `public function write_file(string $file)`
+* `public function as_html(?array $timecodes=[], string $sectiontag='div', string $sentencetag='p', ?callable $sentence_splitter=null)`
+* `public function cues(): array`
+* `public function regions(): array`
+* `public function notes(): array`
+* `public function styles(): array`
+* `public static function cue_as_html(string $cuetext, int $strictness=0): string`
+* `public static function secs_to_timestamp(float $seconds): string`
+* `public array $blocks = []`
+* `public int $strictness = 0`
+
 ## Parsing WebVTT
 
 A WebVTT object can be reused to parse multiple WebVTT files. Each
@@ -56,7 +71,7 @@ $mycaptions->parse_file('captions2.vtt');
 ```
 
 The parser raises a WebVTTException when a parse error occurs. The
-object properties will then hold the results of parsing up to the
+`blocks` property will then hold the results of parsing up to the
 error. In addition to the message in English, a numeric code
 indicates what kind of error occurred. Example:
 
@@ -70,6 +85,20 @@ try {
 }
 ```
 
+There are currently two levels of strictness when parsing WebVTT
+text: At the default level (0), the parser accepts arbitrary tags in
+the cue text, arbitrary cue settings after a timestamp, and
+arbitrary settings in a region block. At strictness level > 0, it
+will instead check that those tags and settings are the ones
+defined by the WebVTT specification. To use the stricter parsing,
+create the WebVTT object with an extra option:
+
+``` php
+$mycaptions = new \W3C\WebVTT('captions.vtt', ['strictness' => 1]);
+```
+
+## Converting back to WebVTT or to HTML
+
 In a string context, the WebVTT object returns its data as a string in
 WebVTT syntax. You can also call the `__toString()` method
 explictly to get that string.
@@ -80,14 +109,12 @@ The `write_file()` method can write a WebVTT file:
 $mycaptions->write_file('newcaptions.vtt');
 ```
 
-It is equivalent to:
+This is equivalent to:
 
 ``` php
-$s = myparser->__toString();
+$s = $mycaptions->__toString();
 file_put_contents('newcaptions.vtt', $s);
 ```
-
-## Converting back to WebVTT or to HTML
 
 The function `as_html()` can turn a WebVTT object into a transcript
 in HTML: It takes all cue text, splits it up into sentences,
@@ -100,95 +127,53 @@ replaced by HTML ones.
 
 ## The contents of a WebVTT object
 
-The results of parsing a WebVTT text are stored in three object properties:
+The results of parsing a WebVTT text are stored in the `blocks` property,
+which is an array whose entries are objects of one of the classes
+`WebVTTCue`, `WebVTTNote`, `WebVTTRegion` and `WebVTTStyle`.
 
-`cues` (`$mycaptions->cues`) represents the parsed WebVTT text as an array of cues.
-Example:
+Code that inspects the results of parsing could look like this:
 
 ``` php
+foreach ($mycaptions->blocks as $b) {
+  if ($b instanceof \W3C\WebVTTNote) {
+    // do something with $b->text
+  } elseif ($b instanceof \W3C\WebVTTStyle) {
+    // do something with $b->text
+  } elseif ($b instanceof \W3C\WebVTTRegion) {
+    // do something with $b->settings
+  } else {    // i.e., $b instanceof \W3C\WebVTTCue
+    // do something with $b->identifier, $b->start,
+    // $b->end, $b->settings and $b->text
+  }
+}
+```
+
+The method `styles()` returns an array of strings, corresponding
+to the style rules of the STYLE blocks.
+
+The method `regions()` returns an array of region settings,
+corresponding to the settings of the REGION blocks.
+
+The method `notes()` returns an array of strings, corresponding
+to the texts of the NOTE blocks.
+
+The method `cues()` returns an array of cues, e.g.:
+
+``` php
+$cues = $mycaptions->cues();
+```
+
+with result something like this:
+
+```
 [ [ "identifier" => "s2",
-    "start" => "256.21",
-    "end" => "259.01",
+    "start" => 256.21,
+    "end" => 259.01,
     "settings" => [ "align" => "right", "size" => "50%" ],
     "text" => "Is it an apple?\nOr an orange?" ],
-  [ "identifier" => ''
-    "start" => "259.1",
-    "end" => "260.21",
+  [ "identifier" => "",
+    "start" => 260.21,
+    "end" => 262.31,
     "settings" => [],
-    "text" => "It is an orange." ] ]
+    "text" => "Neither." ] ]
 ```
-
-`cues` is an array where each entry is a cue, and each cue in turn is
-an array with the following entries:
-
-* `identifier`: the cue's ID, or '' if none.
-* `start`: start time in seconds.
-* `end`: end time in seconds.
-* `settings`: an array of style and position properties.
-* `text`: text of the cue.
-
-The text field represents one or more lines of text and may
-contain plain text as well as spans of text enclosed in tags
-(`<i>`, `<lang>`, `<v>`, etc.) and HTML entities (&eacute;,
-etc.). Tagged spans can be nested, e.g.: `<v Joe>Hello
-<i>dear</i></v>`.
-
-`regions` (`$mycaptions->regions`)is an array with all regions defined in a WebVTT file.
-E.g., the following two regions in WebVTT:
-
-```
-REGION
-id:fred
-width:40%
-lines:3
-regionanchor:0%,100%
-viewportanchor:10%,90%
-scroll:up
-
-REGION
-id:bill
-width:40%
-lines:3
-regionanchor:100%,100%
-viewportanchor:90%,90%
-scroll:up
-
-would be represented as:
-
-``` php
-[ [ "id" => "fred",
-    "width" => "40%",
-    "lines" => "3",
-    "regionanchor" => "0%,100%",
-    "viewportanchor" => "10%,90%",
-    "scroll" => "up" ],
-  [ "id" => "bill",
-    "width" => "40%",
-    "lines" => "3",
-    "regionanchor" => "100%,100%",
-    "viewportanchor" => "90%,90%",
-    "scroll" => "up" ] ]
-```
-
-`styles` (`$mycaptions->styles`) is a string with the concatenation of all STYLE blocks.
-E.g., the style blocks
-
-```
-STYLE
-::cue {
-  background: yellow}
-
-STYLE
-::cue(b) {color: purple}
-```
-
-would give this value for the styles property:
-
-``` php
-"::cue\n  {background: yellow}\n::cue(b) {color: purple}\n"
-```
-
-Note that the `styles` property ends with a newline (unless it is
-empty). This is unlike the cue text, which has a newline between
-lines, but not at the end.
-
