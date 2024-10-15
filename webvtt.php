@@ -589,7 +589,7 @@ class WebVTT implements \Stringable
    *  \returns the same text with tags closed before the FF and reopened after
    *
    *  The method has two functions: It checks that a WebVTT cue text
-   *  is correct, i.e., it checkes that tags are properly paired; and
+   *  is correct, i.e., it checks that tags are properly paired; and
    *  it closes all open tags just before a form feed and reopens them
    *  after. This is used by as_html() when splitting a text into
    *  sentences.
@@ -598,7 +598,8 @@ class WebVTT implements \Stringable
    *  b, u, c, lang, ruby, rt and timestamp) and that only v and lang
    *  have an annotation.
    */
-  private static function fix_up_tags($text, int $strictness = 0): string
+  private static function fix_up_tags($text, int $strictness = 0,
+    string $file = null, int $linenr = -1): string
   {
     $opentags = [];
     $r = '';
@@ -634,7 +635,9 @@ class WebVTT implements \Stringable
         throw new WebVTTException($text, E_TAG);
       }
     }
-    if (count($opentags) !== 0)
+    if (count($opentags) == 1 && $opentags[0][0] == 'v') {
+      $r .= '</v>';             // </v> at the end may be omitted
+    } elseif (count($opentags) !== 0)
       throw new WebVTTException($opentags[0][0], E_UNCLOSED, $file, $linenr);
     return $r;
   }
@@ -652,9 +655,10 @@ class WebVTT implements \Stringable
   private static function find_sentences(string $text): string
   {
     // Full stop, question mark, exclamation mark or ellipis, followed
-    // by space and an uppercase letter.
+    // by space, optional tags (<...>), optional "(" or "[", and an
+    // uppercase letter.
     $text = preg_replace(
-      "/([.!?…](?:<[^>]*>)*)[ \t\n]+((?:<[^>]*>)*[-— \t\"'\\p{Pi}]*\\p{Lu})/u",
+      "/([.!?…](?:<[^>]*>)*)[ \t\n]+((?:<[^>]*>)*[-— \t\"'\\p{Pi}([]*\\p{Lu})/u",
       "\$1\u{000C}\$2", $text);
 
     // Ideographic full stop, full-width exclamation mark, full-width
@@ -868,7 +872,8 @@ class WebVTT implements \Stringable
     $text = '';
     while (++$linenr <= array_key_last($lines) && $lines[$linenr] !== '') {
       if ($text !== '') $text .= "\n";
-      $text .= self::fix_up_tags($lines[$linenr], $this->strictness);
+      $text .= self::fix_up_tags($lines[$linenr], $this->strictness, $file,
+        $linenr);
     }
 
     // Append this cue to the cues property.
